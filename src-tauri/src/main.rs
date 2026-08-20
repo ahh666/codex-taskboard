@@ -777,17 +777,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
             append_log(&state, &line);
-            if is_stderr && line.contains("running Codex instance has no debuggable renderer") {
-                update_snapshot(&app, &state, |snapshot| {
-                    if state.generation.load(Ordering::SeqCst) == generation
-                        && snapshot.child_pid == Some(pid)
-                    {
-                        snapshot.phase = "starting".into();
-                        snapshot.message =
-                            "当前平台无法向已打开的普通 Codex 注入；不会启动第二个实例。".into();
-                    }
-                });
-            } else if is_stderr && line.contains("Waiting for Codex") {
+            if is_stderr && line.contains("Waiting for Codex") {
                 update_snapshot(&app, &state, |snapshot| {
                     if state.generation.load(Ordering::SeqCst) == generation
                         && snapshot.child_pid == Some(pid)
@@ -826,6 +816,15 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                 {
                     snapshot.open_request_pending = false;
                 }
+            } else if !is_stderr && line.contains("\"openedTaskboardInExistingCodex\":true") {
+                update_snapshot(&app, &state, |snapshot| {
+                    if state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                    {
+                        snapshot.phase = "running".into();
+                        snapshot.message = "任务面板已在现有 Codex 的浏览面板中打开。".into();
+                    }
+                });
             } else if !is_stderr && line.contains("\"injected\"") {
                 update_snapshot(&app, &state, |snapshot| {
                     if state.generation.load(Ordering::SeqCst) == generation
