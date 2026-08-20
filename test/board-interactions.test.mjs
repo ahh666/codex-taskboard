@@ -45,10 +45,11 @@ test("text selection is reserved for editable fields", () => {
 });
 
 test("main issue cards stay compact while sidebar cards show ownership and creation time", () => {
-  assert.doesNotMatch(cardSource, /projectName|project-chip/);
+  assert.match(cardSource, /projectName[\s\S]*?className="project-chip"/);
   assert.match(cardSource, /variant === "sidebar" && \([\s\S]*?className="sidebar-card-creator"/);
   assert.match(cardSource, /<AssigneeControl[\s\S]*?<span>\{createdDate\(task\.createdAt, locale, text\)\}<\/span>/);
-  assert.doesNotMatch(styles, /\.card-footer|\.created-at|\.project-chip/);
+  assert.doesNotMatch(styles, /\.card-footer|\.created-at/);
+  assert.match(styles, /\.project-chip/);
   assert.match(styles, /\.task-card \{[\s\S]*?min-height: 80px;[\s\S]*?gap: 6px;[\s\S]*?padding: 7px 8px/);
   assert.match(detailSource, /currentTask\.createdAt/);
 });
