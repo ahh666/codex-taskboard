@@ -498,7 +498,7 @@ export function TaskCard({
               task={task}
               participants={task.participants.length ? task.participants : [creator]}
               currentUser={currentUser}
-              disabled={propertyDisabled || task.source === "jira"}
+              disabled={propertyDisabled || task.source !== "local"}
               open={propertyMenu === "assignee"}
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
@@ -527,7 +527,7 @@ export function TaskCard({
           {!processingCard && task.priority !== "none" && (
             <PriorityControl
               task={task}
-              disabled={propertyDisabled}
+              disabled={propertyDisabled || task.source === "feishu"}
               open={propertyMenu === "priority"}
               onOpenChange={(open) => setPropertyMenu(open ? "priority" : null)}
               onChange={(priority) => updateProperty({ priority }, "priority")}
@@ -538,7 +538,7 @@ export function TaskCard({
               availableLabels={availableLabels}
               selectedLabels={task.labels}
               open={propertyMenu === "labels"}
-              disabled={propertyDisabled}
+              disabled={propertyDisabled || task.source === "feishu"}
               className="card-label-picker card-property-control"
               triggerClassName="card-label-trigger"
               triggerContent={<TaskLabels task={task} />}
@@ -562,7 +562,7 @@ export function TaskCard({
               task={task}
               participants={task.participants}
               currentUser={currentUser}
-              disabled={propertyDisabled || task.source === "jira"}
+              disabled={propertyDisabled || task.source !== "local"}
               open={propertyMenu === "assignee"}
               onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
               onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}

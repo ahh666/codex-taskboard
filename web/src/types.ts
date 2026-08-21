@@ -333,7 +333,7 @@ export interface Project {
   id: string;
   name: string;
   workspacePath: string | null;
-  source: "local" | "jira";
+  source: "local" | "jira" | "feishu";
   labels: string[];
   issueCount: number;
   createdAt: string;
@@ -415,8 +415,9 @@ export interface Task {
   startDate: string | null;
   dueDate: string | null;
   recurrence: Recurrence | null;
-  source: "local" | "jira";
+  source: "local" | "jira" | "feishu";
   externalOrigin?: string | null;
+  externalId?: string | null;
   externalKey?: string | null;
   externalUrl: string | null;
   archivedAt: string | null;
@@ -435,6 +436,22 @@ export interface JiraConnection {
   projectId: string;
   lastSyncedAt: string | null;
   insecureHttp: boolean;
+}
+
+export interface FeishuTasklist {
+  guid: string;
+  name: string;
+  url: string | null;
+}
+
+export interface FeishuConnection {
+  configured: boolean;
+  authorized: boolean;
+  appId: string | null;
+  scopes: string[];
+  tasklists: FeishuTasklist[];
+  projectId: string;
+  lastSyncedAt: string | null;
 }
 
 export interface Comment {

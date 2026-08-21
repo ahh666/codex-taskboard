@@ -530,6 +530,7 @@ export function TaskDetail({
   const commentInlineImages = inlineMediaImages(commentSegments);
   const editingDraft = serializeInlineMedia(editingSegments);
   const displayIdentifier = currentTask.externalKey ?? currentTask.identifier;
+  const isFeishuTask = currentTask.source === "feishu";
   const editingInlineImages = inlineMediaImages(editingSegments);
 
   useEffect(() => {
@@ -1150,7 +1151,7 @@ export function TaskDetail({
                 <button
                   className="attachment-add-button"
                   type="button"
-                  disabled={uploadingAttachments}
+                  disabled={isFeishuTask || uploadingAttachments}
                   onClick={() => attachmentInputRef.current?.click()}
                 >
                   <AttachmentIcon color="currentColor" />
@@ -1198,14 +1199,16 @@ export function TaskDetail({
                           >
                             <LinearIcon name="openExternal" />
                           </a>
-                          <button
-                            type="button"
-                            aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
-                            title={text("删除附件", "Delete attachment")}
-                            onClick={() => setPendingAttachmentDelete(attachment)}
-                          >
-                            <DeleteIcon color="currentColor" />
-                          </button>
+                          {!isFeishuTask && (
+                            <button
+                              type="button"
+                              aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
+                              title={text("删除附件", "Delete attachment")}
+                              onClick={() => setPendingAttachmentDelete(attachment)}
+                            >
+                              <DeleteIcon color="currentColor" />
+                            </button>
+                          )}
                         </div>
                       </li>
                     ))}
@@ -1221,17 +1224,19 @@ export function TaskDetail({
               )}
             </article>
 
-            <IssueSubIssues
-              task={currentTask}
-              tasks={tasks}
-              onOpenTask={onOpenTask}
-              onAddRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
-                () => onAddRelation(anchor, type, relatedTaskId),
-              )}
-              onRemoveRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
-                () => onRemoveRelation(anchor, type, relatedTaskId),
-              )}
-            />
+            {!isFeishuTask && (
+              <IssueSubIssues
+                task={currentTask}
+                tasks={tasks}
+                onOpenTask={onOpenTask}
+                onAddRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
+                  () => onAddRelation(anchor, type, relatedTaskId),
+                )}
+                onRemoveRelation={(anchor, type, relatedTaskId) => applyRelationMutation(
+                  () => onRemoveRelation(anchor, type, relatedTaskId),
+                )}
+              />
+            )}
 
             <section className="activity-section" aria-labelledby="activity-heading">
               <header className="activity-heading">
@@ -1355,7 +1360,7 @@ export function TaskDetail({
                             {text("已编辑", "Edited")}
                           </span>
                         )}
-                        {editingId !== comment.id && (
+                        {editingId !== comment.id && !isFeishuTask && (
                           <div className="comment-actions" data-comment-menu-root={comment.id}>
                             <button
                               type="button"
@@ -1497,7 +1502,7 @@ export function TaskDetail({
                                   </span>
                                   <span><strong>{attachment.filename}</strong><small>{fileSize(attachment.size)}</small></span>
                                 </a>
-                                {editingId !== comment.id && (
+                                {editingId !== comment.id && !isFeishuTask && (
                                   <button
                                     type="button"
                                     aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
@@ -1535,7 +1540,7 @@ export function TaskDetail({
                 </div>
               )}
 
-              <form className="comment-composer" onSubmit={(event) => { event.preventDefault(); void submitComment(); }}>
+              {!isFeishuTask && <form className="comment-composer" onSubmit={(event) => { event.preventDefault(); void submitComment(); }}>
                 <div className="composer-author">
                   <ActorAvatar
                     className="comment-avatar"
@@ -1617,7 +1622,7 @@ export function TaskDetail({
                     </button>
                   </div>
                 </footer>
-              </form>
+              </form>}
             </section>
           </div>
 
@@ -1644,7 +1649,9 @@ export function TaskDetail({
                   <span className="detail-copy-action-icon" aria-hidden="true">
                     <LinearIcon name="openExternal" />
                   </span>
-                  <span className="detail-copy-action-label">{text("打开 Jira", "Open Jira")}</span>
+                  <span className="detail-copy-action-label">{currentTask.source === "feishu"
+                    ? text("打开飞书", "Open Feishu")
+                    : text("打开 Jira", "Open Jira")}</span>
                 </a>
               )}
               <button
@@ -1689,7 +1696,9 @@ export function TaskDetail({
                   label: taskStatusLabel(language, status),
                   icon: <StatusIcon status={status} size={14} />,
                   className: `status-icon-${STATUS_DETAILS[status].tone}`,
-                }))}
+                })).filter((option) => (
+                  !isFeishuTask || option.value === "todo" || option.value === "done"
+                ))}
                 open={propertyMenu === "status"}
                 disabled={savingProperty === "status"}
                 className="detail-property-picker"
@@ -1720,7 +1729,7 @@ export function TaskDetail({
                   className: `priority-${priority}`,
                 }))}
                 open={propertyMenu === "priority"}
-                disabled={savingProperty === "priority"}
+                disabled={isFeishuTask || savingProperty === "priority"}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("优先级", "Priority")}
@@ -1740,7 +1749,7 @@ export function TaskDetail({
                   icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,
                 }))}
                 open={propertyMenu === "assignee"}
-                disabled={currentTask.source === "jira" || savingProperty === "assignee"}
+                disabled={currentTask.source !== "local" || savingProperty === "assignee"}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("负责人", "Assignee")}
@@ -1763,7 +1772,7 @@ export function TaskDetail({
                 availableLabels={availableLabels}
                 selectedLabels={currentTask.labels}
                 open={propertyMenu === "labels"}
-                disabled={savingProperty === "labels"}
+                disabled={isFeishuTask || savingProperty === "labels"}
                 className="detail-label-picker"
                 triggerClassName="detail-label-trigger"
                 showSelectedAsChips
@@ -1795,7 +1804,7 @@ export function TaskDetail({
                   })),
                 ]}
                 open={propertyMenu === "development"}
-                disabled={developmentScanLoading || savingProperty === "developmentContext"}
+                disabled={isFeishuTask || developmentScanLoading || savingProperty === "developmentContext"}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("开发上下文", "Development context")}
@@ -1821,7 +1830,7 @@ export function TaskDetail({
               <input
                 type="date"
                 value={currentTask.startDate ?? ""}
-                disabled={savingProperty === "startDate"}
+                disabled={isFeishuTask || savingProperty === "startDate"}
                 onChange={(event) => void saveTask({
                   startDate: event.target.value || null,
                 }, "startDate")}
@@ -1861,7 +1870,7 @@ export function TaskDetail({
                   { value: "year", label: text("每年", "Yearly"), icon: <RecurrenceIcon color="currentColor" size={14} /> },
                 ]}
                 open={propertyMenu === "recurrence"}
-                disabled={savingProperty === "recurrence"}
+                disabled={isFeishuTask || savingProperty === "recurrence"}
                 className="detail-property-picker"
                 triggerClassName="detail-property-trigger"
                 ariaLabel={text("重复", "Recurrence")}
