@@ -2170,11 +2170,12 @@ export function App() {
   }, [filteredTasks]);
 
   const hasBlockedTasks = tasks.some((task) => task.status === "blocked");
-  const mainStatuses = isFeishuProject
-    ? (["todo", "done"] satisfies TaskStatus[])
-    : hasBlockedTasks
-      ? MAIN_STATUSES
-      : MAIN_STATUSES.filter((status) => status !== "blocked");
+  const mainStatuses = hasBlockedTasks
+    ? [...MAIN_STATUSES] as TaskStatus[]
+    : [...MAIN_STATUSES.filter((status) => status !== "blocked")] as TaskStatus[];
+  if (isFeishuProject) {
+    mainStatuses.splice(0, mainStatuses.length, "todo", "done");
+  }
   const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * 24);
   const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * 24);
   const otherTasksColumnCount = mainStatuses.length + 1;
@@ -4019,46 +4020,46 @@ export function App() {
                   <div className="board">
                     {mainStatuses.map((status) => (
                       <BoardColumn
-                        key={status}
-                        scrollRef={(element) => {
-                          boardColumnScrollRefs.current[status] = element;
-                        }}
-                        status={status}
-                        tasks={tasksByStatus[status]}
-                        presentations={taskPresentations}
-                        now={processingNow}
-                        emptyMessage={hasActiveTaskFilters
-                          ? text("当前筛选下无匹配议题", "No issues match the current filters")
-                          : text("暂无议题", "No issues")}
-                        isDropTarget={dropTarget === status}
-                        draggedTaskId={draggedTaskId}
-                        draggedTaskHeight={draggedTaskHeight}
-                        movingTaskId={movingTaskId}
-                        settlingTaskId={settlingTaskId}
-                        contextMenuTaskId={contextMenu?.taskId ?? null}
-                        availableLabels={availableLabels}
-                        projectNames={isAllProjects ? projectNames : undefined}
-                        currentUser={currentUser}
-                        showCover={boardCardDisplay.cover}
-                        showBody={boardCardDisplay.body}
-                        createEnabled={!isAllProjects && !isExternalProject}
-                        onCreateLabel={persistProjectLabel}
-                        onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
-                        onEdit={openTaskDetail}
-                        onUpdate={updateTaskProperties}
-                        onComplete={(task) => void moveTask(task, "done")}
-                        onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
-                        onDragStart={startTaskDrag}
-                        onDragEnd={endTaskDrag}
-                        onDragEnter={setDropTarget}
-                        onDrop={finishTaskDrop}
-                        onOpenConversation={openTaskConversation}
+                          key={status}
+                          scrollRef={(element) => {
+                            boardColumnScrollRefs.current[status] = element;
+                          }}
+                          status={status}
+                          tasks={tasksByStatus[status]}
+                          presentations={taskPresentations}
+                          now={processingNow}
+                          emptyMessage={hasActiveTaskFilters
+                            ? text("当前筛选下无匹配议题", "No issues match the current filters")
+                            : text("暂无议题", "No issues")}
+                          isDropTarget={dropTarget === status}
+                          draggedTaskId={draggedTaskId}
+                          draggedTaskHeight={draggedTaskHeight}
+                          movingTaskId={movingTaskId}
+                          settlingTaskId={settlingTaskId}
+                          contextMenuTaskId={contextMenu?.taskId ?? null}
+                          availableLabels={availableLabels}
+                          projectNames={isAllProjects ? projectNames : undefined}
+                          currentUser={currentUser}
+                          showCover={boardCardDisplay.cover}
+                          showBody={boardCardDisplay.body}
+                          createEnabled={!isAllProjects && !isExternalProject}
+                          onCreateLabel={persistProjectLabel}
+                          onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
+                          onEdit={openTaskDetail}
+                          onUpdate={updateTaskProperties}
+                          onComplete={(task) => void moveTask(task, "done")}
+                          onContextMenu={(task, position) => setContextMenu({ taskId: task.id, ...position })}
+                          onDragStart={startTaskDrag}
+                          onDragEnd={endTaskDrag}
+                          onDragEnter={setDropTarget}
+                          onDrop={finishTaskDrop}
+                          onOpenConversation={openTaskConversation}
                       />
                     ))}
                   </div>
                 </div>
-                {otherTasksMounted && !isFeishuProject && (
-                  <OtherTasksPanel
+                {otherTasksMounted && (
+                  !isFeishuProject && <OtherTasksPanel
                     open={otherTasksVisible}
                     activeTab={otherTasksTab}
                     tasksByStatus={tasksByStatus}
@@ -4384,8 +4385,8 @@ export function App() {
         />
       )}
 
-      {localAiChatAvailable && !isAllProjects && !isExternalProject && (
-        <Suspense fallback={null}>
+      {localAiChatAvailable && !isAllProjects && (
+        !isExternalProject && <Suspense fallback={null}>
           <AiChat
             available
             projectId={selectedProjectId || null}

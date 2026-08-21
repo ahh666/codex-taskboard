@@ -1644,14 +1644,14 @@ export function TaskDetail({
               <span className="detail-property-label">{text("状态", "Status")}</span>
               <TaskPropertyPicker
                 value={currentTask.status}
-                options={(isFeishuTask ? TASK_STATUSES.filter((status) => (
-                  status === "todo" || status === "done"
-                )) : TASK_STATUSES).map((status) => ({
+                options={TASK_STATUSES.map((status) => ({
                   value: status,
                   label: taskStatusLabel(language, status),
                   icon: <StatusIcon status={status} />,
                   className: `status-icon-${STATUS_DETAILS[status].tone}`,
-                }))}
+                })).filter((option) => (
+                  !isFeishuTask || option.value === "todo" || option.value === "done"
+                ))}
                 open={propertyMenu === "status"}
                 disabled={savingProperty === "status"}
                 className="detail-property-picker"

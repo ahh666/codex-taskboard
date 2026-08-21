@@ -275,17 +275,17 @@ export function TaskContextMenu({
         >
           {submenu === "status" && (
             <div className="context-submenu" role="menu" data-submenu-panel="status" style={{ "--submenu-shift": `${submenuShift}px` } as CSSProperties}>
-              {(task.source === "feishu"
-                ? TASK_STATUSES.filter((status) => status === "todo" || status === "done")
-                : TASK_STATUSES).map((status, index) => (
-                <MenuItem
-                  key={status}
-                  label={taskStatusLabel(language, status)}
-                  icon={<LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />}
-                  shortcut={String(index + 1)}
-                  checked={task.status === status}
-                  onClick={() => closeThen(() => onStatusChange(task, status))}
-                />
+              {TASK_STATUSES.map((status, index) => (
+                (task.source !== "feishu" || status === "todo" || status === "done") && (
+                  <MenuItem
+                    key={status}
+                    label={taskStatusLabel(language, status)}
+                    icon={<LinearStatusIcon status={status} className={`status-icon-${STATUS_DETAILS[status].tone}`} />}
+                    shortcut={String(task.source === "feishu" ? ["todo", "done"].indexOf(status) + 1 : index + 1)}
+                    checked={task.status === status}
+                    onClick={() => closeThen(() => onStatusChange(task, status))}
+                  />
+                )
               ))}
             </div>
           )}
