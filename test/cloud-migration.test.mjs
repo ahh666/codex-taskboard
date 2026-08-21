@@ -84,6 +84,14 @@ async function createMigrationFixture({
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE project_readmes (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      content TEXT NOT NULL DEFAULT '',
+      version INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE tasks (
       id TEXT PRIMARY KEY,
       identifier TEXT NOT NULL UNIQUE,
@@ -378,6 +386,7 @@ function expectedProjectCounts() {
   return {
     alpha: {
       projects: 1,
+      project_readmes: 0,
       tasks: 2,
       comments: 1,
       attachments: 2,
@@ -386,6 +395,7 @@ function expectedProjectCounts() {
     },
     beta: {
       projects: 1,
+      project_readmes: 0,
       tasks: 1,
       comments: 1,
       attachments: 1,
@@ -399,6 +409,7 @@ function expectedCloudBaselineCounts() {
   return {
     local: {
       projects: 1,
+      project_readmes: 0,
       tasks: 0,
       comments: 0,
       attachments: 0,
@@ -429,6 +440,9 @@ function createD1Adapter(
     },
     async countByProject() {
       return structuredClone(state.tables ? importedCounts : initialCounts);
+    },
+    async listProjectReadmes() {
+      return structuredClone(state.tables?.project_readmes ?? []);
     },
   };
 }
@@ -488,7 +502,7 @@ test("migration snapshots live WAL data, counts each project, and strips local e
     attachmentsDirectory: fixture.attachmentsDirectory,
   });
 
-  assert.equal(bundle.schemaVersion, 1);
+  assert.equal(bundle.schemaVersion, 2);
   assert.deepEqual(bundle.counts.byProject, expectedProjectCounts());
   assert.deepEqual(
     bundle.tables.projects.map((project) => project.id).sort(),
@@ -580,6 +594,7 @@ test("cloud import calls D1 and R2 adapters, then verifies project counts and ob
   assert.equal(d1.calls.length, 1);
   assert.deepEqual(Object.keys(d1.calls[0]), [
     "projects",
+    "project_readmes",
     "tasks",
     "comments",
     "task_relations",
@@ -693,9 +708,9 @@ test("D1 binding import uses one JSON statement per table for 100+ rows", async 
   await adapters.d1.importTables(tables);
 
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 6);
+  assert.equal(batches[0].length, 7);
   for (const statement of batches[0]) assert.match(statement.sql, /json_each\(\?\)/);
-  assert.equal(JSON.parse(batches[0][1].values[0]).length, 125);
+  assert.equal(JSON.parse(batches[0][2].values[0]).length, 125);
 });
 
 test("Wrangler D1 SQL chunks large tables below the remote statement byte limit", async () => {
