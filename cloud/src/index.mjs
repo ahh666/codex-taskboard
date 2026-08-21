@@ -2,6 +2,7 @@ import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mj
 import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
+const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const DEFAULT_PROJECT_LABELS_JSON = JSON.stringify(DEFAULT_LABEL_NAMES);
 const PROJECT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -440,7 +441,11 @@ function resolveAssignee(target, actor) {
   };
 }
 
-async function readJson(request) {
+async function readJson(
+  request,
+  limit = JSON_BODY_LIMIT,
+  tooLargeMessage = "JSON body cannot exceed 1 MiB",
+) {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
     throw new ApiError(
@@ -450,12 +455,12 @@ async function readJson(request) {
     );
   }
   const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > JSON_BODY_LIMIT) {
-    throw new ApiError(413, "BODY_TOO_LARGE", "JSON body cannot exceed 1 MiB");
+  if (contentLength > limit) {
+    throw new ApiError(413, "BODY_TOO_LARGE", tooLargeMessage);
   }
   const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > JSON_BODY_LIMIT) {
-    throw new ApiError(413, "BODY_TOO_LARGE", "JSON body cannot exceed 1 MiB");
+  if (new TextEncoder().encode(text).byteLength > limit) {
+    throw new ApiError(413, "BODY_TOO_LARGE", tooLargeMessage);
   }
   try {
     return JSON.parse(text);
@@ -2422,6 +2427,101 @@ async function saveWorkflow(env, projectId, expectedVersion, workspace) {
   return getWorkflow(env, projectId);
 }
 
+async function getProjectReadme(env, projectId) {
+  const project = await getProject(env, projectId);
+  if (!project) {
+    throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+  }
+  const row = await env.DB.prepare(`
+    SELECT project_id, content, version, created_at, updated_at
+    FROM project_readmes
+    WHERE project_id = ?
+  `).bind(projectId).first();
+  return row
+    ? {
+      projectId: row.project_id,
+      content: row.content,
+      version: row.version,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }
+    : { projectId, content: "", version: 0, createdAt: null, updatedAt: null };
+}
+
+async function saveProjectReadme(env, projectId, content, expectedVersion) {
+  const project = await getProject(env, projectId);
+  if (!project) {
+    throw new ApiError(404, "PROJECT_NOT_FOUND", `Project '${projectId}' does not exist`);
+  }
+  const timestamp = now();
+  if (expectedVersion === undefined) {
+    await env.DB.prepare(`
+      INSERT INTO project_readmes (project_id, content, version, created_at, updated_at)
+      VALUES (?, ?, 1, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        content = excluded.content,
+        version = project_readmes.version + 1,
+        updated_at = excluded.updated_at
+    `).bind(projectId, content, timestamp, timestamp).run();
+    return getProjectReadme(env, projectId);
+  }
+  const current = await env.DB.prepare(`
+    SELECT version FROM project_readmes WHERE project_id = ?
+  `).bind(projectId).first();
+  if (expectedVersion !== undefined) {
+    const actualVersion = current?.version ?? 0;
+    if (actualVersion !== expectedVersion) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Project README changed since it was last read", {
+        expectedVersion,
+        actualVersion,
+      });
+    }
+  }
+  if (current) {
+    const versionCondition = expectedVersion !== undefined ? " AND version = ?" : "";
+    const params = expectedVersion !== undefined
+      ? [content, timestamp, projectId, expectedVersion]
+      : [content, timestamp, projectId];
+    const result = await env.DB.prepare(`
+      UPDATE project_readmes
+      SET content = ?, version = version + 1, updated_at = ?
+      WHERE project_id = ?${versionCondition}
+    `).bind(...params).run();
+    if (!changed(result)) {
+      const latest = await env.DB.prepare(`
+        SELECT version FROM project_readmes WHERE project_id = ?
+      `).bind(projectId).first();
+      throw new ApiError(
+        409,
+        "VERSION_CONFLICT",
+        "Project README changed since it was last read",
+        { expectedVersion, actualVersion: latest?.version ?? 0 },
+      );
+    }
+  } else {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO project_readmes (project_id, content, version, created_at, updated_at)
+        VALUES (?, ?, 1, ?, ?)
+      `).bind(projectId, content, timestamp, timestamp).run();
+    } catch (error) {
+      if (String(error.message).includes("UNIQUE constraint failed")) {
+        const latest = await env.DB.prepare(`
+          SELECT version FROM project_readmes WHERE project_id = ?
+        `).bind(projectId).first();
+        throw new ApiError(
+          409,
+          "VERSION_CONFLICT",
+          "Project README changed since it was last read",
+          { expectedVersion, actualVersion: latest?.version ?? 0 },
+        );
+      }
+      throw error;
+    }
+  }
+  return getProjectReadme(env, projectId);
+}
+
 async function listTaskActivities(env, taskId) {
   const task = await requireTaskRow(env, taskId);
   const rows = await all(env.DB.prepare(`
@@ -2798,6 +2898,42 @@ async function routeApi(request, env, actor, url) {
       const workspace = parseWorkflowWorkspace(body.workspace);
       return json(200, {
         workflow: await saveWorkflow(env, projectId, version, workspace),
+      });
+    }
+    methodNotAllowed(["GET", "PUT"]);
+  }
+
+  const projectReadmeMatch = pathname.match(
+    /^\/api\/projects\/([^/]+)\/readme$/,
+  );
+  if (projectReadmeMatch) {
+    requireNoQuery(url, "Project README routes");
+    const projectId = validateProjectId(
+      decodePathPart(projectReadmeMatch[1], "Project id"),
+    );
+    if (request.method === "GET") {
+      return json(200, { readme: await getProjectReadme(env, projectId) });
+    }
+    if (request.method === "PUT") {
+      const body = await readJson(
+        request,
+        PROJECT_README_BODY_LIMIT,
+        "Project README request cannot exceed 3 MiB",
+      );
+      assertPlainObject(body);
+      assertAllowedKeys(body, new Set(["version", "content"]));
+      const version = body.version === undefined
+        ? undefined
+        : parseVersion(body.version, { allowZero: true });
+      const content = body.content ?? "";
+      if (typeof content !== "string") {
+        throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
+      }
+      if (content.length > 500_000) {
+        throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
+      }
+      return json(200, {
+        readme: await saveProjectReadme(env, projectId, content, version),
       });
     }
     methodNotAllowed(["GET", "PUT"]);

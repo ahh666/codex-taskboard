@@ -65,6 +65,7 @@ import { BoardColumn } from "./components/BoardColumn";
 import type { AiChatOpenThreadRequest } from "./components/AiChat";
 import { BoardCardDisplayMenu } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
+import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
@@ -142,7 +143,7 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt" | "workflow";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
   | { projectId: string; view: "list"; scrollTop: number };
@@ -340,7 +341,7 @@ function readIssueActivityKeys(storageKey: string): Record<string, string> {
 
 function readProjectBoardView(projectId: string): BoardView {
   const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
-  return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
+  return view === "readme" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
 }
@@ -383,6 +384,7 @@ const EVENT_NAMES = [
   "attachment.deleted",
   "project.created",
   "project.labels.updated",
+  "project.readme.updated",
   "workflow.updated",
 ] as const;
 
@@ -576,6 +578,7 @@ interface LocalRealtimeSyncProps {
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
+  setReadmeRevision: Dispatch<SetStateAction<number>>;
 }
 
 function LocalRealtimeSync({
@@ -587,6 +590,7 @@ function LocalRealtimeSync({
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
+  setReadmeRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
     const source = new EventSource(resolveTaskboardUrl("/api/events"));
@@ -646,6 +650,10 @@ function LocalRealtimeSync({
         }
         return;
       }
+      if (event.type === "project.readme.updated") {
+        setReadmeRevision((current) => current + 1);
+        return;
+      }
       if (event.type.startsWith("comment.")) {
         if (!detailTaskId || !payload.taskId || payload.taskId === detailTaskId) {
           setCommentsRevision((current) => current + 1);
@@ -667,6 +675,7 @@ function LocalRealtimeSync({
       scheduleRefresh({ projects: true, tasks: Boolean(selectedProjectId) });
       if (selectedProjectId && selectedProjectId !== ALL_PROJECTS_ID) {
         void refreshWorkflowOptions(selectedProjectId);
+        setReadmeRevision((current) => current + 1);
       }
       if (detailTaskId) {
         setCommentsRevision((current) => current + 1);
@@ -689,6 +698,7 @@ function LocalRealtimeSync({
     setAttachmentsRevision,
     setCommentsRevision,
     setConnection,
+    setReadmeRevision,
   ]);
 
   return null;
@@ -768,6 +778,7 @@ export function App() {
   const [commentsRevision, setCommentsRevision] = useState(0);
   const [attachmentsRevision, setAttachmentsRevision] = useState(0);
   const [workflowRevision, setWorkflowRevision] = useState(0);
+  const [readmeRevision, setReadmeRevision] = useState(0);
   const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>(DEFAULT_WORKFLOW_OPTIONS);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -1958,6 +1969,7 @@ export function App() {
           if (projectId !== ALL_PROJECTS_ID) void refreshWorkflowOptions(projectId).catch(() => {});
         }
         setWorkflowRevision((current) => current + 1);
+        setReadmeRevision((current) => current + 1);
         setCommentsRevision((current) => current + 1);
         setAttachmentsRevision((current) => current + 1);
       },
@@ -3327,6 +3339,7 @@ export function App() {
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
+          setReadmeRevision={setReadmeRevision}
         />
       )}
       {!embedded && (
@@ -3564,6 +3577,16 @@ export function App() {
             >
               {text("甘特图", "Gantt")}
             </button>
+            {!isAllProjects && (
+              <button
+                className={`view-tab${boardView === "readme" ? " active" : ""}`}
+                type="button"
+                aria-pressed={boardView === "readme"}
+                onClick={() => selectBoardView("readme")}
+              >
+                Readme
+              </button>
+            )}
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
                 className={`view-tab${boardView === "workflow" ? " active" : ""}`}
@@ -3709,7 +3732,8 @@ export function App() {
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
           />
-        ) : hasLoadedTasks
+        ) : boardView !== "readme"
+          && hasLoadedTasks
           && tasks.length === 0
           && selectedProject
           && aiImportReadyProjectId === selectedProject.id ? (
@@ -3744,6 +3768,14 @@ export function App() {
               </button>
             </div>
           </div>
+        ) : boardView === "readme" && selectedProject ? (
+          <ProjectReadmeView
+            key={selectedProjectId}
+            project={selectedProject}
+            currentUser={currentUser}
+            revision={readmeRevision}
+            onError={setActionError}
+          />
         ) : boardView === "dashboard" && selectedProject ? (
           <DashboardView
             key={selectedProjectId}

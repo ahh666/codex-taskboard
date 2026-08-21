@@ -377,6 +377,14 @@ export interface ProjectSummary {
   error: string | null;
 }
 
+export interface ProjectReadme {
+  projectId: string;
+  content: string;
+  version: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface TaskRelationSummary {
   id: string;
   identifier: string;

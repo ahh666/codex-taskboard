@@ -29,6 +29,7 @@ const COMMAND_OPTIONS = new Map([
   ["project list", new Set(["json"])],
   ["project create", new Set(["id", "name", "workspace-path", "json"])],
   ["project map", new Set(["workspace-path", "json"])],
+  ["project readme", new Set(["content", "file", "if-version", "json"])],
   ["cloud login", new Set(["url", "actor-name", "json"])],
   ["cloud status", new Set(["json"])],
   ["cloud logout", new Set(["json"])],
@@ -211,7 +212,7 @@ async function execute(parsed, overrides) {
   const allowedOptions = COMMAND_OPTIONS.get(command);
   if (!allowedOptions) {
     throw usageError(
-      "Expected one of: project list/create/map, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download/upload, context current",
+      "Expected one of: project list/create/map/readme, cloud login/status/logout, issue list/get/create/update/move/archive/restore/relation, comment list/add/update/delete, attachment download/upload, context current",
     );
   }
   validateOptions(parsed.options, allowedOptions);
@@ -254,6 +255,8 @@ async function execute(parsed, overrides) {
           ),
         },
       );
+    case "project readme":
+      return executeProjectReadme(api, parsed, overrides);
     case "cloud login":
       expectOperandCount(parsed, 0);
       return cloudLogin(
@@ -566,6 +569,69 @@ function guessContentType(filename) {
     default:
       return "application/octet-stream";
   }
+}
+
+async function executeProjectReadme(api, parsed, overrides) {
+  const operands = parsed.operands;
+  const firstOperand = operands[0];
+  const isExplicitSet = firstOperand === "set";
+  const isExplicitGet = firstOperand === "get";
+  const isOptionSet = parsed.options.content !== undefined || parsed.options.file !== undefined;
+  const isSet = isExplicitSet || (!isExplicitGet && isOptionSet);
+
+  let rawProjectId;
+  if (isExplicitSet || isExplicitGet) {
+    if (operands.length > 2) {
+      throw usageError(`project readme ${firstOperand} accepts at most 1 positional argument (project id)`);
+    }
+    rawProjectId = operands[1];
+  } else {
+    if (operands.length > 1) {
+      throw usageError("project readme accepts at most 1 positional argument (project id)");
+    }
+    rawProjectId = operands[0];
+  }
+
+  let projectId = rawProjectId;
+  if (!projectId) {
+    const context = await currentContext(api, {}, overrides);
+    projectId = context.project?.id ?? DEFAULT_PROJECT_ID;
+  }
+
+  if (isSet) {
+    let content = parsed.options.content;
+    if (content !== undefined && parsed.options.file !== undefined) {
+      throw usageError("Use either --content or --file, not both");
+    }
+    if (parsed.options.file !== undefined) {
+      const read = overrides.readFile ?? readFile;
+      try {
+        content = await read(parsed.options.file, "utf8");
+      } catch (error) {
+        throw new TaskctlError(`Cannot read file: ${parsed.options.file}`, {
+          code: "FILE_READ_FAILED",
+          exitCode: 2,
+          details: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (content === undefined) {
+      throw usageError("project readme set requires --content or --file");
+    }
+    const ifVersion = parsed.options["if-version"] !== undefined
+      ? explicitVersion(parsed.options["if-version"], { allowZero: true })
+      : undefined;
+    return api.request("PUT", `/api/projects/${encodeURIComponent(projectId)}/readme`, {
+      content,
+      ...(ifVersion !== undefined ? { version: ifVersion } : {}),
+    });
+  }
+
+  if (parsed.options.content !== undefined || parsed.options.file !== undefined || parsed.options["if-version"] !== undefined) {
+    throw usageError("project readme get does not accept --content, --file, or --if-version");
+  }
+
+  return api.request("GET", `/api/projects/${encodeURIComponent(projectId)}/readme`);
 }
 
 async function cloudLogin(api, rawUrl, actorName, overrides) {
@@ -972,11 +1038,11 @@ function attachmentContentPath(attachmentId) {
   return `/api/attachments/${encodeURIComponent(attachmentId)}/content`;
 }
 
-function explicitVersion(rawVersion) {
+function explicitVersion(rawVersion, { allowZero = false } = {}) {
   if (rawVersion === undefined) throw usageError("Missing required option --if-version");
   const version = Number(rawVersion);
-  if (!Number.isSafeInteger(version) || version < 1) {
-    throw usageError("--if-version must be a positive integer");
+  if (!Number.isSafeInteger(version) || version < (allowZero ? 0 : 1)) {
+    throw usageError(`--if-version must be a ${allowZero ? "non-negative" : "positive"} integer`);
   }
   return version;
 }

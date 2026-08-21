@@ -20,9 +20,13 @@ taskctl context current [--cwd PATH] [--json]
 taskctl project list [--json]
 taskctl project create --name NAME [--id ID] [--workspace-path PATH] [--json]
 taskctl project map PROJECT_ID --workspace-path PATH [--json]
+taskctl project readme get [PROJECT_ID] [--json]
+taskctl project readme set [PROJECT_ID] (--content TEXT | --file PATH) [--if-version N] [--json]
 ```
 
 Use `--workspace-path` to associate a project with a local repository. `context current` chooses the most specific project whose workspace contains the current directory, then falls back to the `local` project.
+
+Use `project readme get` and `project readme set` to read and update the project's single root README document. Detailed multi-page documentation belongs in the project's local `docs/` folder.
 
 Set `CODEX_TASKBOARD_URL` to override the default local API origin, `http://127.0.0.1:47823`.
 

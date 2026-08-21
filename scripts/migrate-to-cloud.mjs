@@ -17,10 +17,12 @@ import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
+const PROJECT_README_D1_CHUNK_CHARACTERS = 10_000;
 const TABLE_ORDER = [
   "projects",
+  "project_readmes",
   "tasks",
   "comments",
   "task_relations",
@@ -30,6 +32,7 @@ const TABLE_ORDER = [
 const LOCAL_WORKFLOW_PATH_FIELDS = new Set(["gitWorktreePath"]);
 const SORT_FIELDS = {
   projects: ["id"],
+  project_readmes: ["project_id"],
   tasks: ["project_id", "identifier", "id"],
   comments: ["task_id", "created_at", "id"],
   task_relations: ["source_task_id", "target_task_id", "relation_type"],
@@ -105,12 +108,20 @@ function buildProjectCounts(tables) {
   for (const project of tables.projects) {
     counts[project.id] = {
       projects: 1,
+      project_readmes: 0,
       tasks: 0,
       comments: 0,
       attachments: 0,
       task_relations: 0,
       workflow_workspaces: 0,
     };
+  }
+
+  for (const readme of tables.project_readmes) {
+    if (!counts[readme.project_id]) {
+      throw new Error(`Project Readme references unknown project '${readme.project_id}'`);
+    }
+    counts[readme.project_id].project_readmes += 1;
   }
 
   const taskProjects = new Map();
@@ -387,6 +398,7 @@ const CLOUD_COLUMNS = {
   projects: [
     "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
   ],
+  project_readmes: ["project_id", "content", "version", "created_at", "updated_at"],
   tasks: [
     "id", "identifier", "project_id", "title", "description", "status", "priority", "labels",
     "sort_order", "thread_id", "thread_codex_project_id", "thread_codex_project_kind",
@@ -453,6 +465,25 @@ export function createCloudD1ImportSql(tables) {
   const statements = [];
   for (const { table, json } of createCloudD1ImportPlan(tables)) {
     const values = JSON.parse(json);
+    if (table === "project_readmes") {
+      for (const row of values) {
+        statements.push(inlineD1InsertStatement(table, [{ ...row, content: "" }]));
+        const characters = Array.from(row.content);
+        for (let offset = 0; offset < characters.length; offset += PROJECT_README_D1_CHUNK_CHARACTERS) {
+          const content = characters
+            .slice(offset, offset + PROJECT_README_D1_CHUNK_CHARACTERS)
+            .join("");
+          const statement = `UPDATE "project_readmes"
+            SET "content" = "content" || json_extract(${sqliteString(JSON.stringify(content))}, '$')
+            WHERE "project_id" = ${sqliteString(row.project_id)};`;
+          if (Buffer.byteLength(statement, "utf8") >= WRANGLER_D1_STATEMENT_MAX_BYTES) {
+            throw new Error(`D1 import project Readme chunk '${row.project_id}' exceeds 90,000 bytes`);
+          }
+          statements.push(statement);
+        }
+      }
+      continue;
+    }
     if (values.length === 0) {
       statements.push(inlineD1InsertStatement(table, values));
       continue;
@@ -493,6 +524,8 @@ export function createCloudD1ImportSql(tables) {
 
 export const CLOUD_PROJECT_COUNTS_SQL = `
   SELECT p.id AS project_id, 1 AS projects,
+    (SELECT COUNT(*) FROM project_readmes r
+      WHERE r.project_id = p.id) AS project_readmes,
     (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS tasks,
     (SELECT COUNT(*) FROM comments c JOIN tasks t ON t.id = c.task_id
       WHERE t.project_id = p.id) AS comments,
@@ -505,15 +538,54 @@ export const CLOUD_PROJECT_COUNTS_SQL = `
   FROM projects p ORDER BY p.id
 `;
 
+export const CLOUD_PROJECT_READMES_SQL = `
+  SELECT project_id, content, version, created_at, updated_at
+  FROM project_readmes ORDER BY project_id
+`;
+
+function assertProjectReadmesMatch(expected, actual) {
+  const normalize = (rows) => rows.map((row) => ({
+    project_id: row.project_id,
+    content: row.content,
+    version: Number(row.version),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+  if (JSON.stringify(normalize(actual)) !== JSON.stringify(normalize(expected))) {
+    throw new Error("Cloud project Readme content mismatch");
+  }
+}
+
 export function createCloudBindingMigrationAdapters({ d1, r2 }) {
   return {
     d1: {
       async importTables(tables) {
-        await d1.batch(
-          createCloudD1ImportPlan(tables).map(({ sql, json }) => (
-            d1.prepare(sql).bind(json)
-          )),
-        );
+        const statements = [];
+        for (const { table, sql, json } of createCloudD1ImportPlan(tables)) {
+          if (table !== "project_readmes") {
+            statements.push(d1.prepare(sql).bind(json));
+            continue;
+          }
+          const readmes = JSON.parse(json);
+          if (readmes.length === 0) {
+            statements.push(d1.prepare(sql).bind(json));
+            continue;
+          }
+          for (const readme of readmes) {
+            statements.push(d1.prepare(`
+              INSERT INTO project_readmes
+                (project_id, content, version, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?)
+            `).bind(
+              readme.project_id,
+              readme.content,
+              readme.version,
+              readme.created_at,
+              readme.updated_at,
+            ));
+          }
+        }
+        await d1.batch(statements);
       },
       async countByProject() {
         const result = await d1.prepare(CLOUD_PROJECT_COUNTS_SQL).all();
@@ -521,6 +593,10 @@ export function createCloudBindingMigrationAdapters({ d1, r2 }) {
           row.project_id,
           Object.fromEntries(TABLE_ORDER.map((table) => [table, Number(row[table])])),
         ]));
+      },
+      async listProjectReadmes() {
+        const result = await d1.prepare(CLOUD_PROJECT_READMES_SQL).all();
+        return result.results;
       },
     },
     r2: {
@@ -551,6 +627,7 @@ export async function verifyCloudMigrationBundle(bundle, { d1, r2 }) {
   validateBundle(bundle);
   const counts = await d1.countByProject();
   assertCountsMatch(bundle.counts.byProject, counts);
+  assertProjectReadmesMatch(bundle.tables.project_readmes, await d1.listProjectReadmes());
   const verified = await verifyR2Attachments(bundle, r2);
   return {
     counts: { byProject: structuredClone(bundle.counts.byProject) },
@@ -596,6 +673,7 @@ export async function importCloudMigrationBundle(bundle, { d1, r2 }) {
     d1Committed = true;
     const counts = await d1.countByProject();
     assertCountsMatch(bundle.counts.byProject, counts);
+    assertProjectReadmesMatch(bundle.tables.project_readmes, await d1.listProjectReadmes());
     return {
       counts: { byProject: structuredClone(bundle.counts.byProject) },
       attachments: { verified },
