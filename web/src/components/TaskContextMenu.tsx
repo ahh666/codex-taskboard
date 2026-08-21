@@ -275,7 +275,9 @@ export function TaskContextMenu({
         >
           {submenu === "status" && (
             <div className="context-submenu" role="menu" data-submenu-panel="status" style={{ "--submenu-shift": `${submenuShift}px` } as CSSProperties}>
-              {TASK_STATUSES.map((status, index) => (
+              {(task.source === "feishu"
+                ? TASK_STATUSES.filter((status) => status === "todo" || status === "done")
+                : TASK_STATUSES).map((status, index) => (
                 <MenuItem
                   key={status}
                   label={taskStatusLabel(language, status)}
@@ -296,6 +298,7 @@ export function TaskContextMenu({
           submenu="priority"
           submenuOpen={submenu === "priority"}
           rootShortcut="p"
+          disabled={task.source === "feishu"}
           onPointerEnter={() => scheduleSubmenu("priority")}
           onClick={() => openSubmenu("priority", true)}
         >
@@ -322,6 +325,7 @@ export function TaskContextMenu({
           submenu="labels"
           submenuOpen={submenu === "labels"}
           rootShortcut="l"
+          disabled={task.source === "feishu"}
           onPointerEnter={() => scheduleSubmenu("labels")}
           onClick={() => openSubmenu("labels", true)}
         >
@@ -372,7 +376,7 @@ export function TaskContextMenu({
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onEdit(task))}
         />
-        {task.source !== "jira" && (
+        {task.source === "local" && (
           <MenuItem
             label={text("创建副本", "Create copy")}
             icon={<LinearIcon name="copy" />}
@@ -422,7 +426,7 @@ export function TaskContextMenu({
         />
       </div>
 
-      {task.source !== "jira" && (
+      {task.source === "local" && (
         <>
           <div className="context-menu-divider" role="separator" />
           <div className="context-menu-group">

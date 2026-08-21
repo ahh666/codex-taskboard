@@ -4671,6 +4671,44 @@ kbd {
   width: min(400px, 100%);
 }
 
+.feishu-connection-dialog {
+  width: min(440px, 100%);
+}
+
+.feishu-connection-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.feishu-tasklists {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 10px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+}
+
+.feishu-tasklists legend {
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.feishu-tasklists label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.feishu-tasklists input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
 .delete-dialog .jira-http-warning {
   margin-top: 7px;
   color: var(--warning-text, #9a6700);

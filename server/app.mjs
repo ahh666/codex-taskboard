@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 import {
   DEFAULT_PROJECT_ID,
+  FEISHU_PROJECT_ID,
   JIRA_PROJECT_ID,
   TASK_STATUSES,
   isTaskPriority,
@@ -30,6 +31,8 @@ import {
   isLocalCompanionRoute,
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
+import { createFeishuConfigStore } from "./feishu-config.mjs";
+import { createFeishuIntegration } from "./feishu-integration.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
 import { ProjectSummaryService } from "./project-summary.mjs";
@@ -86,6 +89,29 @@ function sendJson(response, status, value, headers = {}) {
     ...headers,
   });
   response.end(body);
+}
+
+function sendHtml(response, status, html) {
+  response.writeHead(status, {
+    "cache-control": "no-store",
+    "content-length": Buffer.byteLength(html),
+    "content-type": "text/html; charset=utf-8",
+  });
+  response.end(html);
+}
+
+function feishuAuthorizationPage({ success }) {
+  const title = success ? "飞书授权完成" : "飞书授权未完成";
+  const detail = success
+    ? "可以关闭此页面，回到 Taskboard 刷新飞书清单。"
+    : "请关闭此页面并回到 Taskboard 重试。";
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>${title}</title><body><h1>${title}</h1><p>${detail}</p><script>if (${success ? "true" : "false"}) window.close();</script></body></html>`;
+}
+
+function assertFeishuTaskWriteAvailable(task, operation) {
+  if (task?.source === "feishu") {
+    throw new ApiError(409, "FEISHU_FIELD_UNAVAILABLE", `飞书任务暂不支持在 Taskboard ${operation}`);
+  }
 }
 
 function sendEmpty(response, status, headers = {}) {
@@ -1740,6 +1766,7 @@ export function resolveServerOptions(options = {}) {
     databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
+    feishuConfigPath: options.feishuConfigPath ?? path.join(dataDirectory, "feishu-connection.json"),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
@@ -1817,10 +1844,18 @@ export function createTaskboardServer(options = {}) {
   const jiraConfig = options.jiraConfigStore ?? createJiraConfigStore({
     configPath: resolved.jiraConfigPath,
   });
+  const feishuConfig = options.feishuConfigStore ?? createFeishuConfigStore({
+    configPath: resolved.feishuConfigPath,
+  });
   const jira = createJiraIntegration({
     configStore: jiraConfig,
     database,
     fetch: options.jiraFetch ?? globalThis.fetch,
+  });
+  const feishu = createFeishuIntegration({
+    configStore: feishuConfig,
+    database,
+    fetch: options.feishuFetch ?? globalThis.fetch,
   });
   let hostRuntime = null;
   function currentHostThreadBinding(threadId) {
@@ -2357,6 +2392,115 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PUT"]);
       }
 
+      if (pathname === "/api/local/feishu-connection/callback") {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        try {
+          assertAllowedQuery(url.searchParams, new Set(["code", "state", "error"]), "飞书授权回调");
+          if (url.searchParams.get("error")) {
+            return sendHtml(response, 400, feishuAuthorizationPage({
+              success: false,
+            }));
+          }
+          const code = stringField(url.searchParams.get("code"), "code", { required: true, maxLength: 4_096 });
+          const state = stringField(url.searchParams.get("state"), "state", { required: true, maxLength: 512 });
+          await feishu.completeAuthorization({ code, state });
+          return sendHtml(response, 200, feishuAuthorizationPage({ success: true }));
+        } catch (error) {
+          return sendHtml(response, 400, feishuAuthorizationPage({
+            success: false,
+          }));
+        }
+      }
+
+      if (pathname === "/api/local/feishu-connection") {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书连接接口不接受查询参数");
+        }
+        if (request.method === "GET") {
+          return sendJson(response, 200, { connection: await feishu.status() });
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          assertPlainObject(body);
+          assertAllowedKeys(body, new Set(["tasklists"]));
+          if (!Array.isArray(body.tasklists) || body.tasklists.length > 100) {
+            throw new ApiError(400, "INVALID_FIELD", "'tasklists' must be an array with at most 100 items");
+          }
+          const tasklists = body.tasklists.map((tasklist) => {
+            assertPlainObject(tasklist);
+            assertAllowedKeys(tasklist, new Set(["guid"]));
+            return {
+              guid: stringField(tasklist.guid, "tasklists.guid", { required: true, maxLength: 256 }),
+            };
+          });
+          const connection = await feishu.saveTasklists(tasklists);
+          const project = database.getProject(FEISHU_PROJECT_ID);
+          if (project) events.emit("project.labels.updated", { project });
+          return sendJson(response, 200, { connection });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      if (pathname === "/api/local/feishu-connection/authorize") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书授权接口不接受查询参数");
+        }
+        const activeCloudConfig = await cloudConfig.read();
+        if (activeCloudConfig.remoteUrl) {
+          throw new ApiError(
+            409,
+            "FEISHU_LOCAL_MODE_REQUIRED",
+            "飞书连接当前仅支持本地数据模式，请先退出云端协作模式",
+          );
+        }
+        const body = await readJson(request);
+        assertPlainObject(body);
+        assertAllowedKeys(body, new Set(["appId", "appSecret"]));
+        const appId = stringField(body.appId, "appId", { required: true, maxLength: 256 });
+        const appSecret = stringField(body.appSecret, "appSecret", { required: true, maxLength: 4_096 });
+        const callback = new URL(`http://${request.headers.host ?? "127.0.0.1"}`);
+        if (callback.hostname === "0.0.0.0" || callback.hostname === "::") {
+          callback.hostname = "127.0.0.1";
+        }
+        callback.pathname = `${routePrefix}/api/local/feishu-connection/callback`;
+        callback.search = "";
+        try {
+          return sendJson(response, 200, {
+            authorization: await feishu.startAuthorization({
+              appId,
+              appSecret,
+              redirectUri: callback.toString(),
+            }),
+          });
+        } catch (error) {
+          if (error instanceof ApiError) throw error;
+          throw new ApiError(400, error.code ?? "INVALID_FEISHU_CONFIG", error.message);
+        }
+      }
+
+      if (pathname === "/api/local/feishu-connection/tasklists") {
+        if (request.method === "GET") {
+          if ([...url.searchParams.keys()].length > 0) {
+            throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书任务清单接口不接受查询参数");
+          }
+          return sendJson(response, 200, { tasklists: await feishu.listTasklists() });
+        }
+        return methodNotAllowed(response, ["GET"]);
+      }
+
+      if (pathname === "/api/local/feishu-connection/sync") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书同步接口不接受查询参数");
+        }
+        await assertEmptyRequestBody(request, "POST /api/local/feishu-connection/sync");
+        const connection = await feishu.sync({ force: true });
+        const project = database.getProject(FEISHU_PROJECT_ID);
+        if (project) events.emit("project.labels.updated", { project });
+        return sendJson(response, 200, { connection });
+      }
+
       if (pathname === "/api/local/jira-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         if ([...url.searchParams.keys()].length > 0) {
@@ -2637,6 +2781,10 @@ export function createTaskboardServer(options = {}) {
         }
         validateProjectId(projectId);
         if (request.method === "DELETE") {
+          const project = database.getProject(projectId);
+          if (project?.source === "feishu") {
+            throw new ApiError(409, "FEISHU_PROJECT_DELETE_UNAVAILABLE", "飞书项目由同步管理，不能从 Taskboard 删除");
+          }
           database.deleteProject(projectId);
           return sendEmpty(response, 204);
         }
@@ -2658,19 +2806,20 @@ export function createTaskboardServer(options = {}) {
         if (request.method !== "POST" && request.method !== "DELETE") {
           return methodNotAllowed(response, ["POST", "DELETE"]);
         }
-        if (request.method === "DELETE" && projectId === JIRA_PROJECT_ID) {
+        const project = database.getProject(projectId);
+        if (project?.source === "feishu") {
           throw new ApiError(
             409,
-            "JIRA_LABEL_CATALOG_DELETE_UNAVAILABLE",
-            "Jira 标签目录由同步管理，不能在 Taskboard 中删除",
+            "EXTERNAL_LABEL_CATALOG_UNAVAILABLE",
+            "外部同步项目的标签目录由同步管理，不能在 Taskboard 中修改",
           );
         }
         const label = parseProjectLabel(await readJson(request));
-        const project = request.method === "POST"
+        const updatedProject = request.method === "POST"
           ? database.addProjectLabel(projectId, label)
           : database.deleteProjectLabel(projectId, label);
-        events.emit("project.labels.updated", { project });
-        return sendJson(response, 200, { project });
+        events.emit("project.labels.updated", { project: updatedProject });
+        return sendJson(response, 200, { project: updatedProject });
       }
 
       const workflowWorkspaceRoute = pathname.match(/^\/api\/projects\/([^/]+)\/workflow-workspace$/);
@@ -2689,6 +2838,10 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { workflow: database.getWorkflowWorkspace(projectId) });
         }
         if (request.method === "PUT") {
+          const project = database.getProject(projectId);
+          if (project?.source === "feishu") {
+            throw new ApiError(409, "FEISHU_WORKFLOW_UNAVAILABLE", "飞书项目不支持配置 Taskboard 开发工作流");
+          }
           const input = parseWorkflowWorkspaceSave(await readJson(request));
           const workflow = database.saveWorkflowWorkspace(projectId, input.version, input.workspace);
           events.emit("workflow.updated", {
@@ -2789,7 +2942,13 @@ export function createTaskboardServer(options = {}) {
       if (pathname === "/api/tasks") {
         if (request.method === "GET") {
           const filters = parseTaskFilters(url.searchParams);
-          if (!filters.projectId || filters.projectId === JIRA_PROJECT_ID) await jira.sync();
+          if (!filters.projectId) {
+            await Promise.all([jira.sync(), feishu.sync()]);
+          } else if (filters.projectId === JIRA_PROJECT_ID) {
+            await jira.sync();
+          } else if (filters.projectId === FEISHU_PROJECT_ID) {
+            await feishu.sync();
+          }
           return sendJson(response, 200, { tasks: database.listTasks(filters) });
         }
         if (request.method === "POST") {
@@ -2801,6 +2960,13 @@ export function createTaskboardServer(options = {}) {
               409,
               "JIRA_CREATE_UNAVAILABLE",
               "请在 Jira 中新建议题，Taskboard 当前只同步已分配给你的任务",
+            );
+          }
+          if (input.projectId === FEISHU_PROJECT_ID) {
+            throw new ApiError(
+              409,
+              "FEISHU_CREATE_UNAVAILABLE",
+              "请在飞书中创建任务，Taskboard 当前只同步所选任务清单",
             );
           }
           const task = database.createTask({
@@ -2850,6 +3016,8 @@ export function createTaskboardServer(options = {}) {
         }
         const relationType = parseIssueRelationType(type);
         if (request.method === "POST") {
+          assertFeishuTaskWriteAvailable(database.getTask(taskId), "修改依赖关系");
+          assertFeishuTaskWriteAvailable(database.getTask(relatedTaskId), "修改依赖关系");
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
           );
@@ -2866,6 +3034,8 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, result);
         }
         if (request.method === "DELETE") {
+          assertFeishuTaskWriteAvailable(database.getTask(taskId), "修改依赖关系");
+          assertFeishuTaskWriteAvailable(database.getTask(relatedTaskId), "修改依赖关系");
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
           );
@@ -2922,11 +3092,12 @@ export function createTaskboardServer(options = {}) {
           return sendJson(response, 200, { comments: database.listComments(taskId) });
         }
         if (request.method === "POST") {
+          const task = database.getTask(taskId);
+          assertFeishuTaskWriteAvailable(task, "创建评论");
           const comment = database.createComment(taskId, {
             ...resolveInputThreadBinding(parseCommentCreate(await readJson(request))),
             actor: actorFromRequest(request),
           });
-          const task = database.getTask(taskId);
           events.emit("comment.created", { comment, task });
           return sendJson(response, 201, { comment });
         }
@@ -3037,6 +3208,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "POST") {
           const task = database.getTask(taskId);
           if (!task) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${taskId}' does not exist`);
+          assertFeishuTaskWriteAvailable(task, "添加附件");
           const metadata = parseAttachmentHeaders(request);
           const body = await readBody(request, ATTACHMENT_BODY_LIMIT, "Attachment cannot exceed 25 MiB");
           const id = randomUUID();
@@ -3109,6 +3281,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method !== "DELETE") return methodNotAllowed(response, ["DELETE"]);
         const attachment = database.getAttachment(id);
         if (!attachment) throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${id}' does not exist`);
+        assertFeishuTaskWriteAvailable(database.getTask(attachment.taskId), "删除附件");
         try {
           await unlink(path.join(resolved.attachmentsDirectory, attachment.id));
         } catch (error) {
@@ -3152,11 +3325,15 @@ export function createTaskboardServer(options = {}) {
           const current = database.getTask(id);
           if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
           let jiraChanged = false;
-          if (current.source !== "jira" && changes.projectId === JIRA_PROJECT_ID) {
+          let feishuChanged = false;
+          if (
+            current.source === "local"
+            && [JIRA_PROJECT_ID, FEISHU_PROJECT_ID].includes(changes.projectId)
+          ) {
             throw new ApiError(
               409,
-              "JIRA_PROJECT_MOVE_UNAVAILABLE",
-              "本地任务不能移入 Jira 同步项目",
+              "EXTERNAL_PROJECT_MOVE_UNAVAILABLE",
+              "本地任务不能移入外部同步项目",
             );
           }
           if (current.source === "jira") {
@@ -3184,6 +3361,42 @@ export function createTaskboardServer(options = {}) {
             }
             jiraChanged = await jira.updateTask(current, changes);
           }
+          if (current.source === "feishu") {
+            if (current.version !== version) {
+              throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
+                expectedVersion: version,
+                actualVersion: current.version,
+              });
+            }
+            if (current.archivedAt !== null) {
+              throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be updated");
+            }
+            if (Object.hasOwn(changes, "projectId")) {
+              throw new ApiError(409, "FEISHU_PROJECT_MOVE_UNAVAILABLE", "飞书任务不能移到本地项目");
+            }
+            if (assigneeTarget !== undefined) {
+              throw new ApiError(409, "FEISHU_ASSIGNEE_UNAVAILABLE", "请在飞书中修改负责人");
+            }
+            const unsupportedField = [
+              "priority",
+              "labels",
+              "workflowId",
+              "developmentContext",
+              "startDate",
+              "recurrence",
+            ].find((field) => Object.hasOwn(changes, field));
+            if (unsupportedField) {
+              throw new ApiError(
+                409,
+                "FEISHU_FIELD_UNAVAILABLE",
+                `飞书任务暂不支持在 Taskboard 修改 ${unsupportedField}`,
+              );
+            }
+            if (Object.hasOwn(changes, "status") && !["todo", "done"].includes(changes.status)) {
+              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书任务只能在待办和已完成之间切换");
+            }
+            feishuChanged = await feishu.updateTask(current, changes);
+          }
           if (assigneeTarget !== undefined) {
             changes.assignee = resolveAssignee(assigneeTarget, actor);
           }
@@ -3191,14 +3404,17 @@ export function createTaskboardServer(options = {}) {
           try {
             task = database.updateTask(id, version, changes, threadId, threadBinding, actor);
           } catch (error) {
-            if (jiraChanged) {
+            if (jiraChanged || feishuChanged) {
               try {
-                await jira.reconcile();
+                if (jiraChanged) await jira.reconcile();
+                else await feishu.reconcile();
               } catch {
                 throw new ApiError(
                   502,
-                  "JIRA_RECONCILE_FAILED",
-                  "Jira 已更新，但 Taskboard 重新同步失败，请手动同步",
+                  jiraChanged ? "JIRA_RECONCILE_FAILED" : "FEISHU_RECONCILE_FAILED",
+                  jiraChanged
+                    ? "Jira 已更新，但 Taskboard 重新同步失败，请手动同步"
+                    : "飞书已更新，但 Taskboard 重新同步失败，请手动同步",
                 );
               }
             }
@@ -3209,8 +3425,8 @@ export function createTaskboardServer(options = {}) {
         }
         if (!action && request.method === "DELETE") {
           const current = database.getTask(id);
-          if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_DELETE_UNAVAILABLE", "Jira 任务不能从 Taskboard 永久删除");
+          if (current && current.source !== "local") {
+            throw new ApiError(409, "EXTERNAL_DELETE_UNAVAILABLE", "外部同步任务不能从 Taskboard 永久删除");
           }
           const { version } = parseArchive(await readJson(request));
           const deleted = database.deleteArchivedTask(id, version);
@@ -3240,6 +3456,21 @@ export function createTaskboardServer(options = {}) {
             }
             await jira.moveTask(current, move.status);
           }
+          if (current.source === "feishu") {
+            if (current.version !== move.version) {
+              throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
+                expectedVersion: move.version,
+                actualVersion: current.version,
+              });
+            }
+            if (current.archivedAt !== null) {
+              throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
+            }
+            if (!["todo", "done"].includes(move.status)) {
+              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书任务只能在待办和已完成之间切换");
+            }
+            await feishu.updateTask(current, { status: move.status });
+          }
           const task = database.moveTask(
             id,
             move.version,
@@ -3254,8 +3485,8 @@ export function createTaskboardServer(options = {}) {
         }
         if (action === "archive" && request.method === "POST") {
           const current = database.getTask(id);
-          if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_ARCHIVE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动归档");
+          if (current && current.source !== "local") {
+            throw new ApiError(409, "EXTERNAL_ARCHIVE_UNAVAILABLE", "外部同步任务由同步范围自动管理，不能手动归档");
           }
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
@@ -3272,8 +3503,8 @@ export function createTaskboardServer(options = {}) {
         }
         if (action === "restore" && request.method === "POST") {
           const current = database.getTask(id);
-          if (current?.source === "jira") {
-            throw new ApiError(409, "JIRA_RESTORE_UNAVAILABLE", "Jira 任务由同步范围自动管理，不能手动恢复");
+          if (current && current.source !== "local") {
+            throw new ApiError(409, "EXTERNAL_RESTORE_UNAVAILABLE", "外部同步任务由同步范围自动管理，不能手动恢复");
           }
           const { version, threadId, threadBinding } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),

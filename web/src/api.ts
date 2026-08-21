@@ -15,6 +15,8 @@ import type {
   ComposerTurnInput,
   CodexThreadBinding,
   DevelopmentScan,
+  FeishuConnection,
+  FeishuTasklist,
   HostContext,
   IssueRelationType,
   JiraConnection,
@@ -176,6 +178,62 @@ export async function configureJiraConnection(input: {
 
 export async function syncJiraConnection(): Promise<JiraConnection> {
   const data = await request<{ connection: JiraConnection }>("/api/local/jira-connection/sync", {
+    method: "POST",
+  });
+  return data.connection;
+}
+
+function emptyFeishuConnection(): FeishuConnection {
+  return {
+    configured: false,
+    authorized: false,
+    appId: null,
+    scopes: [],
+    tasklists: [],
+    projectId: "feishu-tasks",
+    lastSyncedAt: null,
+  };
+}
+
+export async function getFeishuConnection(signal?: AbortSignal): Promise<FeishuConnection> {
+  try {
+    const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection", { signal });
+    return data.connection;
+  } catch (error) {
+    if (
+      error instanceof ApiError
+      && (error.code === "LOCAL_COMPANION_REQUIRED" || error.status === 404)
+    ) return emptyFeishuConnection();
+    throw error;
+  }
+}
+
+export async function startFeishuAuthorization(input: {
+  appId: string;
+  appSecret: string;
+}): Promise<{ authorizationUrl: string; redirectUri: string }> {
+  const data = await request<{ authorization: { authorizationUrl: string; redirectUri: string } }>(
+    "/api/local/feishu-connection/authorize",
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return data.authorization;
+}
+
+export async function listFeishuTasklists(): Promise<FeishuTasklist[]> {
+  const data = await request<{ tasklists: FeishuTasklist[] }>("/api/local/feishu-connection/tasklists");
+  return data.tasklists;
+}
+
+export async function saveFeishuTasklists(guids: string[]): Promise<FeishuConnection> {
+  const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection", {
+    method: "PUT",
+    body: JSON.stringify({ tasklists: guids.map((guid) => ({ guid })) }),
+  });
+  return data.connection;
+}
+
+export async function syncFeishuConnection(): Promise<FeishuConnection> {
+  const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection/sync", {
     method: "POST",
   });
   return data.connection;

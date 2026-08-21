@@ -34,6 +34,7 @@ import {
   getAiChatCatalog,
   getCodexThreadProgress,
   getHostRuntime,
+  getFeishuConnection,
   getJiraConnection,
   getTask,
   getTaskboardRevision,
@@ -42,6 +43,7 @@ import {
   listArchivedTasks,
   listDevelopmentContexts,
   listDeviceWorkspaces,
+  listFeishuTasklists,
   listProjects,
   listComments,
   listTasks,
@@ -52,6 +54,9 @@ import {
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
+  saveFeishuTasklists,
+  startFeishuAuthorization,
+  syncFeishuConnection,
   syncJiraConnection,
   uploadAttachment,
   updateTask as updateTaskRequest,
@@ -65,6 +70,7 @@ import { BoardColumn } from "./components/BoardColumn";
 import type { AiChatOpenThreadRequest } from "./components/AiChat";
 import { BoardCardDisplayMenu } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
+import { FeishuConnectionDialog } from "./components/FeishuConnectionDialog";
 import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
@@ -122,6 +128,8 @@ import {
   type CodexProjectIdentity,
   type CodexThreadBinding,
   type DevelopmentScan,
+  type FeishuConnection,
+  type FeishuTasklist,
   type HostContext,
   type IssueRelationType,
   type JiraConnection,
@@ -801,6 +809,12 @@ export function App() {
   const [jiraSaving, setJiraSaving] = useState(false);
   const [jiraSyncing, setJiraSyncing] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
+  const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
+  const [feishuConnection, setFeishuConnection] = useState<FeishuConnection | null>(null);
+  const [feishuTasklists, setFeishuTasklists] = useState<FeishuTasklist[]>([]);
+  const [feishuSaving, setFeishuSaving] = useState(false);
+  const [feishuSyncing, setFeishuSyncing] = useState(false);
+  const [feishuError, setFeishuError] = useState<string | null>(null);
   const [pendingProjectDelete, setPendingProjectDelete] = useState<ProjectChoice | null>(null);
   const [projectDeleteIssueCount, setProjectDeleteIssueCount] = useState<number | null>(null);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
@@ -884,11 +898,13 @@ export function App() {
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const isAllProjects = selectedProjectId === ALL_PROJECTS_ID;
   const isJiraProject = selectedProject?.source === "jira";
+  const isFeishuProject = selectedProject?.source === "feishu";
+  const isExternalProject = selectedProject?.source !== undefined && selectedProject.source !== "local";
   const aiImportProjectId = hasLoadedTasks
     && tasks.length === 0
     && selectedProject
     && selectedProject.id !== GLOBAL_PROJECT_ID
-    && !isJiraProject
+    && !isExternalProject
     && localAiChatAvailable
       ? selectedProject.id
       : null;
@@ -1113,7 +1129,7 @@ export function App() {
     ?? (isAllProjects ? null : selectedProjectId);
   const createTargetProjects = projectChoices.flatMap((choice) => {
     const project = projects.find((candidate) => candidate.id === choice.id);
-    return project && project.source !== "jira"
+    return project && project.source === "local"
       ? [{ id: choice.id, name: choice.name }]
       : [];
   });
@@ -1759,7 +1775,10 @@ export function App() {
         listDeviceWorkspaces(signal),
       ]);
       if (requestId !== projectsRequestRef.current) return;
-      const nextJiraConnection = await getJiraConnection(signal);
+      const [nextJiraConnection, nextFeishuConnection] = await Promise.all([
+        getJiraConnection(signal),
+        getFeishuConnection(signal),
+      ]);
       if (requestId !== projectsRequestRef.current) return;
       setTaskboardMetadata((current) => (
         current
@@ -1782,6 +1801,7 @@ export function App() {
       });
       setProjects(nextProjects);
       setJiraConnection(nextJiraConnection);
+      setFeishuConnection(nextFeishuConnection);
       setSelectedProjectId((current) => {
         const fromQuery = new URLSearchParams(window.location.search).get("project");
         if (fromQuery === ALL_PROJECTS_ID) return fromQuery;
@@ -1856,7 +1876,7 @@ export function App() {
       setTasks(sortTasks(nextTasks));
       setArchivedTasks(sortTasks(nextArchivedTasks));
       setProjects((current) => current.map((project) => {
-        if (project.id !== projectId || project.source !== "jira") return project;
+        if (project.id !== projectId || project.source === "local") return project;
         const labels = [...new Set(nextTasks.flatMap((task) => task.labels))];
         return JSON.stringify(labels) === JSON.stringify(project.labels)
           ? project
@@ -1889,12 +1909,23 @@ export function App() {
   }, [refreshTasks, selectedProjectId]);
 
   useEffect(() => {
-    if ((!isJiraProject && !(isAllProjects && jiraConnection?.configured)) || !selectedProjectId) return;
+    if (
+      (!isExternalProject
+        && !(isAllProjects && (jiraConnection?.configured || feishuConnection?.authorized)))
+      || !selectedProjectId
+    ) return;
     const timer = window.setInterval(() => {
       void refreshTasks(selectedProjectId, { quiet: true });
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [isAllProjects, isJiraProject, jiraConnection?.configured, refreshTasks, selectedProjectId]);
+  }, [
+    feishuConnection?.authorized,
+    isAllProjects,
+    isExternalProject,
+    jiraConnection?.configured,
+    refreshTasks,
+    selectedProjectId,
+  ]);
 
   const refreshWorkflowOptions = useCallback(async (projectId: string, signal?: AbortSignal) => {
     const record = await getWorkflowWorkspace<unknown>(projectId, signal);
@@ -2065,7 +2096,7 @@ export function App() {
         && !event.ctrlKey
         && selectedProjectId
         && !isAllProjects
-        && !isJiraProject
+        && !isExternalProject
         && boardView !== "workflow"
       ) {
         event.preventDefault();
@@ -2087,7 +2118,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [boardView, contextMenu, detailTaskId, editor, isAllProjects, isJiraProject, projectMenuOpen, selectedProjectId]);
+  }, [boardView, contextMenu, detailTaskId, editor, isAllProjects, isExternalProject, projectMenuOpen, selectedProjectId]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
@@ -2139,9 +2170,11 @@ export function App() {
   }, [filteredTasks]);
 
   const hasBlockedTasks = tasks.some((task) => task.status === "blocked");
-  const mainStatuses = hasBlockedTasks
-    ? MAIN_STATUSES
-    : MAIN_STATUSES.filter((status) => status !== "blocked");
+  const mainStatuses = isFeishuProject
+    ? (["todo", "done"] satisfies TaskStatus[])
+    : hasBlockedTasks
+      ? MAIN_STATUSES
+      : MAIN_STATUSES.filter((status) => status !== "blocked");
   const mainBoardMinWidth = (mainStatuses.length * 300) + ((mainStatuses.length - 1) * 24);
   const mainBoardMaxWidth = (mainStatuses.length * 400) + ((mainStatuses.length - 1) * 24);
   const otherTasksColumnCount = mainStatuses.length + 1;
@@ -2368,6 +2401,12 @@ export function App() {
     useDropPosition = false,
   ) {
     if (movingTaskId) {
+      setDropTarget(null);
+      setDraggedTaskId(null);
+      setDraggedTaskHeight(0);
+      return;
+    }
+    if (task.source === "feishu" && task.status === status) {
       setDropTarget(null);
       setDraggedTaskId(null);
       setDraggedTaskHeight(0);
@@ -3241,6 +3280,95 @@ export function App() {
     }
   }
 
+  function openFeishuDialog() {
+    setProjectMenuOpen(false);
+    setProjectContextMenu(null);
+    setFeishuError(null);
+    setFeishuDialogOpen(true);
+  }
+
+  async function authorizeFeishu(input: { appId: string; appSecret: string }) {
+    if (feishuSaving) return;
+    const authorizationWindow = window.open("", "feishu-taskboard-oauth", "popup,width=560,height=720");
+    setFeishuSaving(true);
+    setFeishuError(null);
+    try {
+      const authorization = await startFeishuAuthorization(input);
+      if (authorizationWindow) {
+        authorizationWindow.location.href = authorization.authorizationUrl;
+        authorizationWindow.focus();
+      } else {
+        window.open(authorization.authorizationUrl, "_blank", "noopener");
+      }
+      const connection = await getFeishuConnection();
+      setFeishuConnection(connection);
+      setAnnouncement(text("已打开飞书授权页", "Opened the Feishu authorization page"));
+    } catch (error) {
+      authorizationWindow?.close();
+      setFeishuError(errorMessage(error));
+    } finally {
+      setFeishuSaving(false);
+    }
+  }
+
+  async function refreshFeishuTasklists() {
+    if (feishuSaving) return;
+    setFeishuSaving(true);
+    setFeishuError(null);
+    try {
+      const connection = await getFeishuConnection();
+      if (!connection.authorized) {
+        throw new Error(text("请先完成飞书授权", "Complete Feishu authorization first"));
+      }
+      const tasklists = await listFeishuTasklists();
+      setFeishuConnection(connection);
+      setFeishuTasklists(tasklists);
+    } catch (error) {
+      setFeishuError(errorMessage(error));
+    } finally {
+      setFeishuSaving(false);
+    }
+  }
+
+  async function saveFeishuTasklistSelection(guids: string[]) {
+    if (feishuSaving) return;
+    setFeishuSaving(true);
+    setFeishuError(null);
+    try {
+      const connection = await saveFeishuTasklists(guids);
+      const nextProjects = await listProjects();
+      setFeishuConnection(connection);
+      setProjects(nextProjects);
+      setFeishuDialogOpen(false);
+      changeProject(connection.projectId);
+      await refreshTasks(connection.projectId);
+      setAnnouncement(text("飞书任务已同步", "Feishu tasks synced"));
+    } catch (error) {
+      setFeishuError(errorMessage(error));
+    } finally {
+      setFeishuSaving(false);
+    }
+  }
+
+  async function syncFeishuNow() {
+    if (feishuSyncing || !selectedProjectId) return;
+    setFeishuSyncing(true);
+    setActionError(null);
+    try {
+      const connection = await syncFeishuConnection();
+      setFeishuConnection(connection);
+      await Promise.all([
+        refreshTasks(selectedProjectId, { quiet: true }),
+        refreshProjectList(),
+      ]);
+      setAnnouncement(text("飞书任务已同步", "Feishu tasks synced"));
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setFeishuSyncing(false);
+    }
+  }
+
   function openCreateProjectDialog() {
     setProjectMenuOpen(false);
     setProjectContextMenu(null);
@@ -3504,6 +3632,19 @@ export function App() {
                       type="button"
                       role="menuitem"
                       disabled={openingProjectId !== null}
+                      onClick={openFeishuDialog}
+                    >
+                      <LinearIcon className="project-avatar" name="link" />
+                      <span>
+                        {feishuConnection?.configured
+                          ? text("飞书任务设置", "Feishu task settings")
+                          : text("连接飞书任务", "Connect Feishu tasks")}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={openingProjectId !== null}
                       onClick={openCreateProjectDialog}
                     >
                       <TaskboardIcon className="project-avatar" name="create" />
@@ -3518,7 +3659,7 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
-            {selectedProject && (
+            {selectedProject && !isExternalProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
                 pending={automationPending}
@@ -3540,7 +3681,19 @@ export function App() {
                 <LinearIcon name="recurrence" />
               </button>
             )}
-            {selectedProjectId && !isJiraProject && boardView !== "workflow" && (
+            {isFeishuProject && (
+              <button
+                className="icon-button"
+                type="button"
+                disabled={feishuSyncing}
+                onClick={() => void syncFeishuNow()}
+                aria-label={text("同步飞书任务", "Sync Feishu tasks")}
+                title={text("同步飞书任务", "Sync Feishu tasks")}
+              >
+                <LinearIcon name="recurrence" />
+              </button>
+            )}
+            {selectedProjectId && !isExternalProject && boardView !== "workflow" && (
               <button
                 className="icon-button header-create-button"
                 type="button"
@@ -3671,7 +3824,7 @@ export function App() {
               filters={filters}
               onChange={setFilters}
             />
-            {boardView === "issues" && (
+            {boardView === "issues" && !isFeishuProject && (
               <BoardCardDisplayMenu
                 cover={boardCardDisplay.cover}
                 body={boardCardDisplay.body}
@@ -3843,7 +3996,7 @@ export function App() {
           </Suspense>
         ) : (
           <div
-            className={`issue-board-layout${otherTasksVisible ? " has-other-tasks" : ""}`}
+            className={`issue-board-layout${!isFeishuProject && otherTasksVisible ? " has-other-tasks" : ""}`}
             data-main-columns={mainStatuses.length}
             style={{
               "--main-column-count": mainStatuses.length,
@@ -3888,7 +4041,7 @@ export function App() {
                         currentUser={currentUser}
                         showCover={boardCardDisplay.cover}
                         showBody={boardCardDisplay.body}
-                        createEnabled={!isAllProjects && !isJiraProject}
+                        createEnabled={!isAllProjects && !isExternalProject}
                         onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                         onEdit={openTaskDetail}
@@ -3904,7 +4057,7 @@ export function App() {
                     ))}
                   </div>
                 </div>
-                {otherTasksMounted && (
+                {otherTasksMounted && !isFeishuProject && (
                   <OtherTasksPanel
                     open={otherTasksVisible}
                     activeTab={otherTasksTab}
@@ -3928,7 +4081,7 @@ export function App() {
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
-                    onCreate={isJiraProject || isAllProjects
+                    onCreate={isExternalProject || isAllProjects
                       ? undefined
                       : (initialStatus) => setEditor({ task: null, status: initialStatus })}
                     onRestore={(task) => void restoreArchivedTask(task)}
@@ -3981,6 +4134,21 @@ export function App() {
             if (!jiraSaving) setJiraDialogOpen(false);
           }}
           onSave={saveJiraConnection}
+        />
+      )}
+
+      {feishuDialogOpen && (
+        <FeishuConnectionDialog
+          connection={feishuConnection}
+          tasklists={feishuTasklists}
+          saving={feishuSaving}
+          error={feishuError}
+          onClose={() => {
+            if (!feishuSaving) setFeishuDialogOpen(false);
+          }}
+          onAuthorize={authorizeFeishu}
+          onRefreshTasklists={refreshFeishuTasklists}
+          onSaveTasklists={saveFeishuTasklistSelection}
         />
       )}
 
@@ -4216,7 +4384,7 @@ export function App() {
         />
       )}
 
-      {localAiChatAvailable && !isAllProjects && (
+      {localAiChatAvailable && !isAllProjects && !isExternalProject && (
         <Suspense fallback={null}>
           <AiChat
             available
