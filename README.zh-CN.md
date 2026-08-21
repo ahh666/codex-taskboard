@@ -56,10 +56,10 @@ npm run taskctl -- issue create \
 
 ```bash
 ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
+  ~/.agents/skills/manage-taskboard
 ```
 
-该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
+桌面 App 会让该目录与内置 Skill 保持同步。该 Skill 会指导 Codex 检查议题，将其移到 `in_progress`，使用乐观版本控制，验证工作，然后将其移到 `in_review`；只有在用户明确确认接受或要求将议题标记为完成后，才会将议题移到 `done`。
 
 ## 嵌入 Codex
 

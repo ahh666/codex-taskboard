@@ -20,6 +20,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSObject, NSSize, NSString};
 use reqwest::header::{HeaderValue, ACCEPT};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 #[cfg(target_os = "macos")]
 use std::cell::RefCell;
 #[cfg(target_os = "macos")]
@@ -57,6 +58,15 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(target_os = "macos")]
 const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
+// Unique whole-directory snapshots shipped from app-v0.2.0 through v1.1.2.
+const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
+    "eeaaa5d71a2c47688bf62a5eb9f45e9138fe49eb636a46cfd6af8a0f8853e2e0",
+    "c4ce3257bbf3efed1bb4d2d9f26436be8ba835d4ab4adf6fed38f5abbedafa59",
+    "6f1b1bb3a731aa154018c97b0779442f6c461cb5dd3ea91ca49da4bb3b8a8ea0",
+    "8ab19649d29cad0a39b0ab202b909bf03de07e37837b05cd5c3df5a4da0119f8",
+    "27131c82ac63c2884c1fcb7dd22a4e1c75975c7d79eb3fa3483a7949dd5f284d",
+    "ae74aec793decf6d9013c36f4b53e01723796a45567b77e9e9f22b4a168d3fbe",
+];
 #[cfg(target_os = "macos")]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
@@ -415,6 +425,113 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
         }
     }
     Ok(())
+}
+
+fn collect_skill_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<bool, std::io::Error> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Ok(false);
+        }
+        if file_type.is_dir() {
+            let file_count = files.len();
+            if !collect_skill_files(root, &entry.path(), files)? {
+                return Ok(false);
+            }
+            if files.len() == file_count {
+                return Ok(false);
+            }
+        } else if file_type.is_file() {
+            files.push(entry.path().strip_prefix(root).unwrap().to_path_buf());
+        } else {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn skill_directory_digest(directory: &Path) -> Result<Option<String>, std::io::Error> {
+    let mut files = Vec::new();
+    if !collect_skill_files(directory, directory, &mut files)? {
+        return Ok(None);
+    }
+    files.sort();
+    let mut digest = Sha256::new();
+    for relative_path in files {
+        let contents = fs::read(directory.join(&relative_path))?;
+        digest.update(relative_path.to_string_lossy().replace('\\', "/"));
+        digest.update([0]);
+        digest.update((contents.len() as u64).to_le_bytes());
+        digest.update(contents);
+    }
+    Ok(Some(format!("{:x}", digest.finalize())))
+}
+
+fn reconcile_legacy_skill(
+    home_directory: &Path,
+    bundled_skill: &Path,
+) -> Result<Option<(PathBuf, PathBuf)>, std::io::Error> {
+    let legacy_skill = home_directory.join(".codex/skills/manage-taskboard");
+    let metadata = match fs::symlink_metadata(&legacy_skill) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+
+    if metadata.file_type().is_symlink() {
+        fs::remove_dir_all(legacy_skill)?;
+        return Ok(None);
+    }
+
+    if metadata.is_dir() {
+        let legacy_digest = skill_directory_digest(&legacy_skill)?;
+        let bundled_digest = skill_directory_digest(bundled_skill)?;
+        let known_copy = legacy_digest.as_ref().is_some_and(|digest| {
+            bundled_digest.as_ref() == Some(digest)
+                || KNOWN_TASKBOARD_SKILL_DIGESTS.contains(&digest.as_str())
+        });
+        if known_copy {
+            fs::remove_dir_all(legacy_skill)?;
+            return Ok(None);
+        }
+    }
+
+    let backup_path = home_directory
+        .join(".codex/taskboard-skill-backups")
+        .join(format!("manage-taskboard-{}", Uuid::new_v4()));
+    Ok(Some((legacy_skill, backup_path)))
+}
+
+fn resolve_legacy_skill_conflict(
+    app: &AppHandle,
+    legacy_skill: &Path,
+    backup_path: &Path,
+) -> Result<bool, std::io::Error> {
+    let proceed = app
+        .dialog()
+        .message(format!(
+            "检测到旧位置中的 manage-taskboard Skill 与当前 App 内置版本不同，可能包含你的修改。\n\n为避免 Codex 同时发现两个版本，Taskboard 会把旧副本完整保留到：\n\n{}\n\n选择退出不会改动旧副本，也不会启动 Codex。",
+            backup_path.display()
+        ))
+        .title("Codex Taskboard Skill 冲突")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "保留备份并继续".into(),
+            "退出".into(),
+        ))
+        .blocking_show();
+    if !proceed {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(backup_path.parent().unwrap())?;
+    fs::rename(legacy_skill, backup_path)?;
+    Ok(true)
 }
 
 fn loopback_listener() -> Result<TcpListener, String> {
@@ -1566,6 +1683,7 @@ fn main() {
                 .path()
                 .resource_dir()?
                 .join("app/skills/manage-taskboard");
+            let legacy_skill_conflict = reconcile_legacy_skill(&home_directory, &bundled_skill)?;
             let global_skill = home_directory.join(".agents/skills/manage-taskboard");
             if global_skill.exists() {
                 fs::remove_dir_all(&global_skill)?;
@@ -1795,6 +1913,24 @@ fn main() {
             let startup_check_update = check_update.clone();
             let startup_quit = quit.clone();
             tauri::async_runtime::spawn(async move {
+                if let Some((legacy_skill, backup_path)) = legacy_skill_conflict {
+                    match resolve_legacy_skill_conflict(&app_handle, &legacy_skill, &backup_path) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            app_handle.exit(0);
+                            return;
+                        }
+                        Err(error) => {
+                            show_error_dialog(
+                                &app_handle,
+                                "Codex Taskboard Skill 更新失败",
+                                &format!("无法保留旧 Skill：{error}"),
+                            );
+                            app_handle.exit(1);
+                            return;
+                        }
+                    }
+                }
                 if let Err(error) = start_launcher(&app_handle, &state) {
                     append_log(&state, &format!("Launcher startup failed: {error}"));
                     update_snapshot(&app_handle, &state, |snapshot| {

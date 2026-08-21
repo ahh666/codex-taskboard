@@ -56,10 +56,10 @@ Copy or symlink `skills/manage-taskboard` into the Codex skills directory, then 
 
 ```bash
 ln -s /absolute/path/to/codex-taskboard/skills/manage-taskboard \
-  ~/.codex/skills/manage-taskboard
+  ~/.agents/skills/manage-taskboard
 ```
 
-The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
+The desktop app keeps this same directory synchronized with its bundled Skill. The Skill teaches Codex to inspect an issue, move it to `in_progress`, use optimistic versions, verify the work, and then move it to `in_review`; it moves the issue to `done` only after the user explicitly confirms acceptance or asks to mark it complete.
 
 ## Embed in Codex
 
