@@ -88,7 +88,7 @@ const codexAutomationMethods = new Set([
 let codexAutomationRequestSequence = 0;
 let codexAppServerRequestSequence = 0;
 const taskConversationOperations = new Map();
-const taskConversationOperationTtlMs = 120_000;
+const taskConversationFailureTtlMs = 120_000;
 const quotaPolicyTimers = new Map();
 const quotaPolicyRecords = new Map();
 const quotaPolicyQueues = new Map();
@@ -1411,7 +1411,14 @@ async function restoreQuotaPolicies(cdp) {
 }
 
 async function startTaskConversationViaCdp(cdp, executionContextId, request) {
-  const { codexHostId, instruction, previousThreadId, targetRoot, title } = request;
+  const {
+    codexHostId,
+    instruction,
+    previousThreadId,
+    projectless,
+    targetRoot,
+    title,
+  } = request;
   const normalizeWorkspaceRoot = (value) => {
     const root = String(value || "").trim();
     if (!root) return "";
@@ -1442,7 +1449,7 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
           !root
           || conversationId
           || !editor
-          || (editor.textContent || "") !== ${JSON.stringify(instruction)}
+          || (editor.innerText || "") !== ${JSON.stringify(instruction)}
         ) return false;
         editor.focus();
         return true;
@@ -1508,7 +1515,10 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
             );
             if (
               result?.thread?.id === threadId
-              && normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
+              && (
+                projectless
+                || normalizeWorkspaceRoot(result.thread.cwd) === normalizedTargetRoot
+              )
             ) {
               ready = true;
               break;
@@ -1516,7 +1526,11 @@ async function startTaskConversationViaCdp(cdp, executionContextId, request) {
           } catch {}
           await new Promise((resolve) => setTimeout(resolve, 80));
         }
-        if (!ready) throw new Error("Codex did not confirm the task conversation workspace root");
+        if (!ready) {
+          throw new Error(projectless
+            ? "Codex did not confirm the projectless task conversation"
+            : "Codex did not confirm the task conversation workspace root");
+        }
 
         try {
           await requestCodexAppServerViaCdp(
@@ -1584,15 +1598,26 @@ function getOrStartTaskConversation(cdp, executionContextId, request) {
   ));
   operation.promise = promise;
   taskConversationOperations.set(request.taskId, operation);
-  const retainSettledOperation = () => {
+  const clearSettledOperation = () => {
+    if (taskConversationOperations.get(request.taskId) === operation) {
+      taskConversationOperations.delete(request.taskId);
+    }
+  };
+  const retainCreatedOrUncertainFailure = (error) => {
+    if (!(
+      error
+      && typeof error === "object"
+      && (typeof error.threadId === "string" || error.uncertain === true)
+    )) {
+      clearSettledOperation();
+      return;
+    }
     const timer = setTimeout(() => {
-      if (taskConversationOperations.get(request.taskId) === operation) {
-        taskConversationOperations.delete(request.taskId);
-      }
-    }, taskConversationOperationTtlMs);
+      clearSettledOperation();
+    }, taskConversationFailureTtlMs);
     timer.unref?.();
   };
-  void promise.then(retainSettledOperation, retainSettledOperation);
+  void promise.then(clearSettledOperation, retainCreatedOrUncertainFailure);
   return promise;
 }
 
@@ -2025,6 +2050,7 @@ async function main() {
   let pendingCodexLaunch = null;
   let cdpRuntime = null;
   let codexAppPid = null;
+  let nativeCodexBrowser = false;
   let runtimePublishPromise = null;
   const injectedTargets = new Map();
   let idleAfterNormalExit = false;
@@ -2040,8 +2066,26 @@ async function main() {
     const generation = openRequestGeneration;
     if (generation <= openedRequestGeneration) return true;
     const connection = injectedTargets.values().next().value;
-    if (!connection) return false;
+    if (!nativeCodexBrowser && !connection) return false;
     try {
+      if (nativeCodexBrowser) {
+        const deepLink = new URL("codex://threads/new");
+        deepLink.searchParams.set("browserUrl", taskboardPageUrl);
+        await new Promise((resolve, reject) => {
+          const child = spawn("/usr/bin/open", [deepLink.toString()], {
+            env: withoutTaskboardLauncherEnvironment(process.env),
+            stdio: "ignore",
+          });
+          child.once("error", reject);
+          child.once("close", (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`LaunchServices could not open Taskboard (${code})`));
+          });
+        });
+        openedRequestGeneration = Math.max(openedRequestGeneration, generation);
+        console.log(JSON.stringify({ openedTaskboardInExistingCodex: true }));
+        return true;
+      }
       const evaluation = await connection.send("Runtime.evaluate", {
         expression: `(() => {
           const taskboard = window.__codexTaskboardInjection__;
@@ -2116,9 +2160,12 @@ async function main() {
     if (stopping) return false;
     if (!options.cdpPipe) {
       const runningCodex = codexAppProcesses(options.appPath);
+      let debuggingCodexFound = false;
       for (const record of runningCodex) {
         const port = codexProcessDebuggingPort(record);
-        if (!port || !(await isReachable(`http://127.0.0.1:${port}/json/version`))) continue;
+        if (!port) continue;
+        debuggingCodexFound = true;
+        if (!(await isReachable(`http://127.0.0.1:${port}/json/version`))) continue;
         try {
           if ((await codexTargets(port)).length === 0) continue;
         } catch {
@@ -2131,9 +2178,8 @@ async function main() {
         return true;
       }
       if (runningCodex.length > 0) {
-        console.error(
-          "Waiting for Codex: the running Codex instance has no debuggable renderer; no second instance will be started.",
-        );
+        if (debuggingCodexFound) return false;
+        nativeCodexBrowser = true;
         return false;
       }
     }
@@ -2274,7 +2320,7 @@ async function main() {
     if (stopping) return;
 
     if (options.cdpPipe || !cdpReachable) {
-      idleAfterNormalExit = !(await startManagedCodex());
+      idleAfterNormalExit = !(await startManagedCodex()) && !nativeCodexBrowser;
     } else {
       if (options.launch) {
         const runningCodex = codexAppProcesses(options.appPath)
@@ -2302,7 +2348,7 @@ async function main() {
     let firstResults = [];
     const firstOpenGeneration = openRequestGeneration;
     const shouldOpenFirstTarget = firstOpenGeneration > openedRequestGeneration;
-    if (!idleAfterNormalExit) {
+    if (!idleAfterNormalExit && !nativeCodexBrowser) {
       try {
         firstResults = await injectAll(
           cdpRuntime,
@@ -2329,7 +2375,7 @@ async function main() {
       }
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
     }
-    if (hasOpenPending() && injectedTargets.size > 0) {
+    if (hasOpenPending()) {
       await requestTaskboardOpen();
     }
     if (!options.watch) {
@@ -2355,10 +2401,25 @@ async function main() {
           await connection.hostBridge?.publishHeartbeat();
         } catch (_) {}
       }
+      if (nativeCodexBrowser) {
+        if (codexAppProcesses(options.appPath).length === 0) {
+          nativeCodexBrowser = false;
+          idleAfterNormalExit = true;
+          console.error(
+            "Waiting for Codex after exit; open Codex Taskboard again to restart it.",
+          );
+          continue;
+        }
+        if (hasOpenPending()) await requestTaskboardOpen();
+        continue;
+      }
       if (idleAfterNormalExit) {
         if (!hasOpenPending()) continue;
         try {
-          if (!(await startManagedCodex())) continue;
+          if (!(await startManagedCodex())) {
+            if (nativeCodexBrowser) await requestTaskboardOpen();
+            continue;
+          }
           idleAfterNormalExit = false;
         } catch (restartError) {
           console.error(`Waiting to restart Codex: ${restartError.message}`);
@@ -2381,7 +2442,7 @@ async function main() {
         if (results.length > 0) {
           console.log(JSON.stringify({ injected: results }, null, 2));
         }
-        if (hasOpenPending() && injectedTargets.size > 0) {
+        if (hasOpenPending()) {
           await requestTaskboardOpen();
         }
       } catch (error) {

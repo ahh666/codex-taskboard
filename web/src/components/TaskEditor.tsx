@@ -44,6 +44,7 @@ import {
   type PendingInlineImage,
 } from "./InlineMediaComposer";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
+import { TaskboardIcon } from "./TaskboardIcon";
 
 const RECURRENCE_UNITS: Record<TaskboardLanguage, Record<Recurrence["unit"], string>> = {
   zh: {
@@ -90,7 +91,9 @@ export interface NewTaskEditorDraft {
 }
 
 interface TaskEditorProps {
-  projectId: string;
+  projectId: string | null;
+  projectOptions?: Array<{ id: string; name: string }>;
+  onProjectChange?: (projectId: string | null) => void;
   task: Task | null;
   tasks: Task[];
   referenceTasks: Task[];
@@ -148,6 +151,8 @@ function contextLabel(
 
 export function TaskEditor({
   projectId,
+  projectOptions,
+  onProjectChange,
   task,
   tasks,
   referenceTasks,
@@ -186,7 +191,7 @@ export function TaskEditor({
   const [relatedIds, setRelatedIds] = useState<string[]>(initialDraft?.relations.relatedIds ?? []);
   const [subIssueIds, setSubIssueIds] = useState<string[]>(initialDraft?.relations.subIssueIds ?? []);
   const [createMore, setCreateMore] = useState(false);
-  const [menu, setMenu] = useState<"status" | "priority" | "assignee" | "labels" | "development" | "more" | "due" | "recurrence" | null>(null);
+  const [menu, setMenu] = useState<"project" | "status" | "priority" | "assignee" | "labels" | "development" | "more" | "due" | "recurrence" | null>(null);
   const [relationMenu, setRelationMenu] = useState<DraftRelationMenu | null>(null);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ right: number; bottom: number } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -345,6 +350,10 @@ export function TaskEditor({
     if (!task) {
       if (!createSubmitIntentRef.current) return;
       createSubmitIntentRef.current = false;
+      if (projectOptions && !projectId) {
+        setError(["请选择项目。", "Select a project."]);
+        return;
+      }
     }
     const cleanTitle = title.trim();
     if (!cleanTitle) {
@@ -541,7 +550,7 @@ export function TaskEditor({
               segments={descriptionSegments}
               mentionTasks={tasks}
               referenceTasks={referenceTasks}
-              completionContext={{ projectId, surface: "issue-description" }}
+              completionContext={projectId ? { projectId, surface: "issue-description" } : undefined}
               placeholder={text("添加描述…", "Add description…")}
               ariaLabel={text("描述", "Description")}
               disabled={saving}
@@ -564,6 +573,28 @@ export function TaskEditor({
 
         <div className="task-form-dock">
           <div className="property-row">
+            {!task && projectOptions && (
+              <TaskPropertyPicker
+                value={projectId ?? ""}
+                options={[
+                  {
+                    value: "",
+                    label: text("项目", "Project"),
+                    icon: <TaskboardIcon name="projectFolder" />,
+                  },
+                  ...projectOptions.map((project) => ({
+                    value: project.id,
+                    label: project.name,
+                    icon: <TaskboardIcon name="projectFolder" />,
+                  })),
+                ]}
+                open={menu === "project"}
+                triggerClassName="property-control property-project"
+                ariaLabel={text("项目", "Project")}
+                onOpenChange={(open) => setMenu(open ? "project" : null)}
+                onChange={(value) => onProjectChange?.(value || null)}
+              />
+            )}
             <TaskPropertyPicker
               value={status}
               options={TASK_STATUSES.map((value) => ({

@@ -33,6 +33,8 @@ When writing Chinese, keep the English word or use **本地 companion** / **本�
 
 ## Other operations
 
+- Run `taskctl project readme get [PROJECT_ID]` to inspect project architecture, constraints, and conventions before planning or executing complex tasks.
+- Keep the project README focused on root overview and conventions; store detailed multi-page documentation in the local repository's `docs/` folder.
 - Preserve existing issue scope when adding requirements or acceptance details.
 - Add only relations that the work requires. Use parent for contained work, blocks or blocked_by for dependencies, and related for close association.
 - Let `taskctl` read `CODEX_THREAD_ID` for writes. Outside Codex, pass the exact conversation ID with `--thread-id`.

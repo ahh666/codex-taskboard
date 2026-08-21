@@ -37,6 +37,7 @@ import { ProjectSummaryService } from "./project-summary.mjs";
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
 const JSON_BODY_LIMIT = 1024 * 1024;
+const PROJECT_README_BODY_LIMIT = 3 * 1024 * 1024;
 const ATTACHMENT_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_TURN_BODY_LIMIT = 25 * 1024 * 1024;
 const AI_CHAT_ATTACHMENT_LIMIT = 10;
@@ -500,6 +501,20 @@ function parseProjectLabel(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["label"]));
   return stringField(body.label, "label", { required: true, maxLength: 64 });
+}
+
+function parseProjectReadmeSave(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["content", "version"]));
+  const content = body.content ?? "";
+  if (typeof content !== "string") {
+    throw new ApiError(400, "INVALID_FIELD", "'content' must be a string");
+  }
+  if (content.length > 500_000) {
+    throw new ApiError(400, "INVALID_FIELD", "'content' cannot exceed 500000 characters");
+  }
+  const version = body.version === undefined ? undefined : parseWorkflowVersion(body.version);
+  return { content, version };
 }
 
 function parseThreadId(value) {
@@ -2681,6 +2696,37 @@ export function createTaskboardServer(options = {}) {
             workflowVersion: workflow.version,
           });
           return sendJson(response, 200, { workflow });
+        }
+        return methodNotAllowed(response, ["GET", "PUT"]);
+      }
+
+      const projectReadmeRoute = pathname.match(/^\/api\/projects\/([^/]+)\/readme$/);
+      if (projectReadmeRoute) {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Project README routes do not accept query parameters");
+        }
+        let projectId;
+        try {
+          projectId = decodeURIComponent(projectReadmeRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "Project id contains invalid encoding");
+        }
+        validateProjectId(projectId);
+        if (request.method === "GET") {
+          return sendJson(response, 200, { readme: database.getProjectReadme(projectId) });
+        }
+        if (request.method === "PUT") {
+          const input = parseProjectReadmeSave(await readJson(
+            request,
+            PROJECT_README_BODY_LIMIT,
+            "Project README request cannot exceed 3 MiB",
+          ));
+          const readme = database.saveProjectReadme(projectId, input.content, input.version);
+          events.emit("project.readme.updated", {
+            projectId,
+            readmeVersion: readme.version,
+          });
+          return sendJson(response, 200, { readme });
         }
         return methodNotAllowed(response, ["GET", "PUT"]);
       }

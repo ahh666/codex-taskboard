@@ -47,7 +47,6 @@ import {
   listTasks,
   moveTask as moveTaskRequest,
   publishHostRuntime,
-  rebindAiChatComposerReferences,
   removeTaskRelation,
   resolveTaskboardUrl,
   restoreTask as restoreTaskRequest,
@@ -66,12 +65,11 @@ import { BoardColumn } from "./components/BoardColumn";
 import type { AiChatOpenThreadRequest } from "./components/AiChat";
 import { BoardCardDisplayMenu } from "./components/BoardCardDisplayMenu";
 import { DashboardView } from "./components/DashboardView";
+import { ProjectReadmeView } from "./components/ProjectReadmeView";
 import { IssueListView } from "./components/IssueListView";
 import { JiraConnectionDialog } from "./components/JiraConnectionDialog";
 import { OtherTasksPanel } from "./components/OtherTasksPanel";
 import {
-  createInlineMediaSegments,
-  inlineMediaComposerReferences,
   resolveInlineMediaMarkdown,
   type PendingInlineImage,
 } from "./components/InlineMediaComposer";
@@ -104,7 +102,6 @@ import {
   type OtherTaskTab,
 } from "./issueBoardStatuses";
 import {
-  buildPersistedTaskComposerDocument,
   normalizeCodexThreadId,
   taskCardPresentation,
   type TaskCardPresentation,
@@ -119,7 +116,6 @@ import {
   writeTaskFilters,
 } from "./taskFilters";
 import {
-  COMPOSER_CONTRACT_VERSION,
   TASK_STATUSES,
   type ActorIdentity,
   type AiChatThread,
@@ -147,7 +143,7 @@ import { createRevisionPoller, getRevisionPollingInterval } from "./revisionPoll
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
 type Theme = "light" | "dark";
-type BoardView = "dashboard" | "issues" | "list" | "gantt" | "workflow";
+type BoardView = "readme" | "dashboard" | "issues" | "list" | "gantt" | "workflow";
 type DetailSourceScroll =
   | { projectId: string; view: "issues"; status: TaskStatus; scrollTop: number }
   | { projectId: string; view: "list"; scrollTop: number };
@@ -182,6 +178,7 @@ const GanttView = lazy(() => import("./components/GanttView").then((module) => (
 interface EditorState {
   task: Task | null;
   status: TaskStatus;
+  projectId?: string | null;
 }
 
 interface ContextMenuState {
@@ -345,7 +342,7 @@ function readIssueActivityKeys(storageKey: string): Record<string, string> {
 
 function readProjectBoardView(projectId: string): BoardView {
   const view = taskboardStorage.getItem(`${PROJECT_VIEW_KEY_PREFIX}${projectId}`);
-  return view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
+  return view === "readme" || view === "dashboard" || view === "list" || view === "gantt" || view === "issues"
     ? view
     : "issues";
 }
@@ -388,6 +385,7 @@ const EVENT_NAMES = [
   "attachment.deleted",
   "project.created",
   "project.labels.updated",
+  "project.readme.updated",
   "workflow.updated",
 ] as const;
 
@@ -581,6 +579,7 @@ interface LocalRealtimeSyncProps {
   setConnection: Dispatch<SetStateAction<ConnectionState>>;
   setCommentsRevision: Dispatch<SetStateAction<number>>;
   setAttachmentsRevision: Dispatch<SetStateAction<number>>;
+  setReadmeRevision: Dispatch<SetStateAction<number>>;
 }
 
 function LocalRealtimeSync({
@@ -592,6 +591,7 @@ function LocalRealtimeSync({
   setConnection,
   setCommentsRevision,
   setAttachmentsRevision,
+  setReadmeRevision,
 }: LocalRealtimeSyncProps) {
   useEffect(() => {
     const source = new EventSource(resolveTaskboardUrl("/api/events"));
@@ -651,6 +651,10 @@ function LocalRealtimeSync({
         }
         return;
       }
+      if (event.type === "project.readme.updated") {
+        setReadmeRevision((current) => current + 1);
+        return;
+      }
       if (event.type.startsWith("comment.")) {
         if (!detailTaskId || !payload.taskId || payload.taskId === detailTaskId) {
           setCommentsRevision((current) => current + 1);
@@ -672,6 +676,7 @@ function LocalRealtimeSync({
       scheduleRefresh({ projects: true, tasks: Boolean(selectedProjectId) });
       if (selectedProjectId && selectedProjectId !== ALL_PROJECTS_ID) {
         void refreshWorkflowOptions(selectedProjectId);
+        setReadmeRevision((current) => current + 1);
       }
       if (detailTaskId) {
         setCommentsRevision((current) => current + 1);
@@ -694,6 +699,7 @@ function LocalRealtimeSync({
     setAttachmentsRevision,
     setCommentsRevision,
     setConnection,
+    setReadmeRevision,
   ]);
 
   return null;
@@ -765,6 +771,7 @@ export function App() {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [newTaskDraft, setNewTaskDraft] = useState<{
     projectId: string;
+    targetProjectId: string | null;
     draft: NewTaskEditorDraft;
   } | null>(null);
   const [detailTaskIdentifier, setDetailTaskIdentifier] = useState<string | null>(
@@ -773,6 +780,7 @@ export function App() {
   const [commentsRevision, setCommentsRevision] = useState(0);
   const [attachmentsRevision, setAttachmentsRevision] = useState(0);
   const [workflowRevision, setWorkflowRevision] = useState(0);
+  const [readmeRevision, setReadmeRevision] = useState(0);
   const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>(DEFAULT_WORKFLOW_OPTIONS);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -1099,6 +1107,16 @@ export function App() {
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
   const firstEmptyProjectId = projectChoices.find((project) => project.issueCount === 0)?.id ?? null;
   const hasProjectsWithIssues = projectChoices.some((project) => project.issueCount > 0);
+  const editorProjectId = editor?.task?.projectId
+    ?? editor?.projectId
+    ?? (newTaskDraft?.projectId === selectedProjectId ? newTaskDraft.targetProjectId : undefined)
+    ?? (isAllProjects ? null : selectedProjectId);
+  const createTargetProjects = projectChoices.flatMap((choice) => {
+    const project = projects.find((candidate) => candidate.id === choice.id);
+    return project && project.source !== "jira"
+      ? [{ id: choice.id, name: choice.name }]
+      : [];
+  });
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const issueReadStorageKey = selectedProjectId
     ? `${ISSUE_READ_KEY_PREFIX}:${taskboardMetadata?.mode ?? "local"}:${selectedProjectId}`
@@ -1963,6 +1981,7 @@ export function App() {
           if (projectId !== ALL_PROJECTS_ID) void refreshWorkflowOptions(projectId).catch(() => {});
         }
         setWorkflowRevision((current) => current + 1);
+        setReadmeRevision((current) => current + 1);
         setCommentsRevision((current) => current + 1);
         setAttachmentsRevision((current) => current + 1);
       },
@@ -2186,13 +2205,14 @@ export function App() {
     createOptions?: NewTaskCreateOptions,
   ) {
     if (!selectedProjectId || !editor) return;
+    const targetProjectId = editorProjectId ?? selectedProjectId;
     setActionError(null);
     const creating = editor.task === null;
     let saved: Task;
     try {
       saved = editor.task
         ? await updateTaskRequest(editor.task, draft)
-        : await createTaskRequest(selectedProjectId, draft);
+        : await createTaskRequest(targetProjectId, draft);
     } catch (error) {
       if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
         void refreshTasks(selectedProjectId, { quiet: true });
@@ -2201,7 +2221,7 @@ export function App() {
     }
     if (creating) {
       setProjects((current) => current.map((project) => (
-        project.id === selectedProjectId
+        project.id === targetProjectId
           ? { ...project, issueCount: project.issueCount + 1 }
           : project
       )));
@@ -2668,6 +2688,7 @@ export function App() {
   }
 
   function codexProjectContextForTaskProject(taskboardProjectId: string) {
+    if (taskboardProjectId === GLOBAL_PROJECT_ID) return null;
     const taskboardProject = projects.find((project) => project.id === taskboardProjectId);
     const savedIdentity = projectCodexIdentities[taskboardProjectId];
     if (savedIdentity?.codexProjectKind === "remote") {
@@ -2680,17 +2701,12 @@ export function App() {
         ? savedIdentity
         : null;
     }
-    const effectiveCodexProjectId = taskboardProjectId === GLOBAL_PROJECT_ID
-      ? hostContext?.projectId
-      : taskboardProjectId;
     const directCodexProject = hostContext?.projects?.find(
-      (project) => project.id === effectiveCodexProjectId,
+      (project) => project.id === taskboardProjectId,
     );
-    const mappedWorkspacePath = taskboardProjectId === GLOBAL_PROJECT_ID
-      ? directCodexProject?.workspacePath ?? hostContext?.workspacePath
-      : deviceWorkspacePaths[taskboardProjectId]
-        ?? taskboardProject?.workspacePath
-        ?? directCodexProject?.workspacePath;
+    const mappedWorkspacePath = deviceWorkspacePaths[taskboardProjectId]
+      ?? taskboardProject?.workspacePath
+      ?? directCodexProject?.workspacePath;
     const codexProject = directCodexProject ?? hostContext?.projects?.find(
       (project) => project.workspacePath === mappedWorkspacePath,
     );
@@ -2993,6 +3009,7 @@ export function App() {
           codexHostId: identity.codexHostId,
           codexProjectWorkspacePath: identity.workspacePath,
           workspacePath: identity.workspacePath,
+          projectless: false,
         },
       });
     } catch (error) {
@@ -3008,9 +3025,8 @@ export function App() {
   }
 
   async function openTaskInThread(task: Task) {
-    const worktreePath = task.developmentContext?.type === "worktree"
-      ? task.developmentContext.path
-      : null;
+    const projectless = task.projectId === GLOBAL_PROJECT_ID;
+    const taskboardProject = projects.find((project) => project.id === task.projectId);
     const savedRemoteIdentity = projectCodexIdentities[task.projectId]?.codexProjectKind === "remote"
       ? projectCodexIdentities[task.projectId]
       : null;
@@ -3026,22 +3042,19 @@ export function App() {
       ));
       return;
     }
-    const workspacePath = worktreePath
-      ?? codexProjectContext?.workspacePath
-      ?? selectedDeviceWorkspacePath
-      ?? selectedProject?.workspacePath
-      ?? (
-        selectedProject?.id === GLOBAL_PROJECT_ID
-        || hostContext?.projectId === selectedProject?.id
-          ? hostContext?.workspacePath
-          : undefined
-      );
+    const workspacePath = projectless
+      ? undefined
+      : task.developmentContext?.type === "worktree"
+        ? task.developmentContext.path
+        : codexProjectContext?.workspacePath
+          ?? deviceWorkspacePaths[task.projectId]
+          ?? taskboardProject?.workspacePath;
     const instruction = `e-taskboard 处理任务面板任务 ${task.identifier}，并同步进度状态。`;
 
     if (!embedded || window.parent === window) {
       setActionError([
-        "在对话中打开仅可在 Codex 内嵌任务面板中使用。请从 Codex 侧栏打开任务面板后重试。",
-        "Open in conversation is available only in the embedded Codex Taskboard. Open Taskboard from the Codex sidebar and try again.",
+        "在新对话打开仅可在 Codex 内嵌任务面板中使用。请从 Codex 侧栏打开任务面板后重试。",
+        "Open in new conversation is available only in the embedded Codex Taskboard. Open Taskboard from the Codex sidebar and try again.",
       ]);
       return;
     }
@@ -3089,47 +3102,6 @@ export function App() {
         )).join("\n")
       : "（无）"}`;
     const embeddedInstruction = `${beforeDescription}${task.description}${afterDescription}`;
-    if (localAiChatAvailable) {
-      setActionError(null);
-      const descriptionSegments = createInlineMediaSegments(task.description, referenceTasks);
-      if (inlineMediaComposerReferences(descriptionSegments).length === 0) {
-        setAiOpenThreadRequest((current) => ({
-          projectId: task.projectId,
-          issueId: task.id,
-          composerText: embeddedInstruction,
-          requestId: (current?.requestId ?? 0) + 1,
-        }));
-        return;
-      }
-      const persistedDocument = buildPersistedTaskComposerDocument(
-        beforeDescription,
-        descriptionSegments,
-        afterDescription,
-      );
-      setOpeningThreadTaskId(task.id);
-      try {
-        const rebound = await rebindAiChatComposerReferences({
-          contractVersion: COMPOSER_CONTRACT_VERSION,
-          projectId: task.projectId,
-          document: persistedDocument,
-        });
-        setAiOpenThreadRequest((current) => ({
-          projectId: task.projectId,
-          issueId: task.id,
-          composerDraft: {
-            ready: rebound.ready,
-            revision: rebound.revision,
-            document: rebound.ready ? rebound.document : persistedDocument,
-          },
-          requestId: (current?.requestId ?? 0) + 1,
-        }));
-      } catch (error) {
-        setActionError(errorMessage(error));
-      } finally {
-        setOpeningThreadTaskId(null);
-      }
-      return;
-    }
     setOpeningThreadTaskId(task.id);
     setActionError(null);
     if (codexProjectContext?.codexProjectKind === "remote" && codexProjectContext.workspacePath) {
@@ -3148,7 +3120,8 @@ export function App() {
         description: task.description,
         canonicalReferences,
         instruction: embeddedInstruction,
-        projectName: selectedProject?.name,
+        projectName: taskboardProject?.name,
+        projectless,
         codexProjectId: codexProjectContext?.codexProjectId,
         codexProjectKind: codexProjectContext?.codexProjectKind ?? "local",
         codexHostId: codexProjectContext?.codexHostId ?? "local",
@@ -3379,6 +3352,7 @@ export function App() {
           setConnection={setConnection}
           setCommentsRevision={setCommentsRevision}
           setAttachmentsRevision={setAttachmentsRevision}
+          setReadmeRevision={setReadmeRevision}
         />
       )}
       {!embedded && (
@@ -3566,7 +3540,7 @@ export function App() {
                 <LinearIcon name="recurrence" />
               </button>
             )}
-            {selectedProject && !isJiraProject && boardView !== "workflow" && (
+            {selectedProjectId && !isJiraProject && boardView !== "workflow" && (
               <button
                 className="icon-button header-create-button"
                 type="button"
@@ -3616,6 +3590,16 @@ export function App() {
             >
               {text("甘特图", "Gantt")}
             </button>
+            {!isAllProjects && (
+              <button
+                className={`view-tab${boardView === "readme" ? " active" : ""}`}
+                type="button"
+                aria-pressed={boardView === "readme"}
+                onClick={() => selectBoardView("readme")}
+              >
+                Readme
+              </button>
+            )}
             {SHOW_WORKFLOW_BOARD_ENTRY && (
               <button
                 className={`view-tab${boardView === "workflow" ? " active" : ""}`}
@@ -3761,7 +3745,8 @@ export function App() {
             openingThread={openingThreadTaskId === detailTask.id}
             onError={setActionError}
           />
-        ) : hasLoadedTasks
+        ) : boardView !== "readme"
+          && hasLoadedTasks
           && tasks.length === 0
           && selectedProject
           && aiImportReadyProjectId === selectedProject.id ? (
@@ -3796,6 +3781,14 @@ export function App() {
               </button>
             </div>
           </div>
+        ) : boardView === "readme" && selectedProject ? (
+          <ProjectReadmeView
+            key={selectedProjectId}
+            project={selectedProject}
+            currentUser={currentUser}
+            revision={readmeRevision}
+            onError={setActionError}
+          />
         ) : boardView === "dashboard" && selectedProject ? (
           <DashboardView
             key={selectedProjectId}
@@ -4169,22 +4162,30 @@ export function App() {
       {editor && (
         <TaskEditor
           key={editor.task?.id ?? `new-${selectedProjectId}-${editor.status}`}
-          projectId={selectedProjectId}
+          projectId={editorProjectId}
+          projectOptions={!editor.task && isAllProjects ? createTargetProjects : undefined}
+          onProjectChange={(projectId) => setEditor((current) => (
+            current ? { ...current, projectId } : current
+          ))}
           task={editor.task}
-          tasks={tasks.filter((task) => task.projectId === selectedProjectId)}
-          referenceTasks={referenceTasks.filter((task) => task.projectId === selectedProjectId)}
+          tasks={tasks.filter((task) => task.projectId === editorProjectId)}
+          referenceTasks={referenceTasks.filter((task) => task.projectId === editorProjectId)}
           initialStatus={editor.status}
           initialDraft={editor.task || newTaskDraft?.projectId !== selectedProjectId
             ? null
             : newTaskDraft.draft}
-          labels={availableLabels}
+          labels={projects.find((project) => project.id === editorProjectId)?.labels ?? []}
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
-          onCreateLabel={persistProjectLabel}
+          onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
             if (!editor.task) {
-              setNewTaskDraft(draft ? { projectId: selectedProjectId, draft } : null);
+              setNewTaskDraft(draft ? {
+                projectId: selectedProjectId,
+                targetProjectId: editorProjectId,
+                draft,
+              } : null);
             }
             setEditor(null);
           }}
