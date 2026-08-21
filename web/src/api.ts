@@ -26,8 +26,6 @@ import type {
   TaskboardMetadata,
   TaskDraft,
   TaskStatus,
-  WorkflowCapabilities,
-  WorkflowWorkspaceRecord,
 } from "./types";
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
@@ -428,42 +426,6 @@ export async function listDeviceWorkspaces(signal?: AbortSignal): Promise<Record
     if (error instanceof ApiError && error.code === "LOCAL_COMPANION_REQUIRED") return {};
     throw error;
   }
-}
-
-export async function listWorkflowCapabilities(
-  workspacePath?: string,
-  signal?: AbortSignal,
-): Promise<WorkflowCapabilities> {
-  const query = new URLSearchParams();
-  if (workspacePath) query.set("workspacePath", workspacePath);
-  const suffix = query.size > 0 ? `?${query}` : "";
-  return request<WorkflowCapabilities>(`/api/workflow-capabilities${suffix}`, { signal });
-}
-
-export async function getWorkflowWorkspace<T>(
-  projectId: string,
-  signal?: AbortSignal,
-): Promise<WorkflowWorkspaceRecord<T>> {
-  const data = await request<{ workflow: WorkflowWorkspaceRecord<T> }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow-workspace`,
-    { signal },
-  );
-  return data.workflow;
-}
-
-export async function saveWorkflowWorkspace<T>(
-  projectId: string,
-  workspace: T,
-  version: number,
-): Promise<WorkflowWorkspaceRecord<T>> {
-  const data = await request<{ workflow: WorkflowWorkspaceRecord<T> }>(
-    `/api/projects/${encodeURIComponent(projectId)}/workflow-workspace`,
-    {
-      method: "PUT",
-      body: JSON.stringify({ version, workspace }),
-    },
-  );
-  return data.workflow;
 }
 
 export async function getProjectReadme(

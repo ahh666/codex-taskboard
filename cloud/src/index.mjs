@@ -1,4 +1,3 @@
-import { normalizeWorkflowSnapshot } from "../../shared/workflow-control-flow.mjs";
 import { DEFAULT_LABEL_NAMES } from "../../shared/domain.mjs";
 
 const JSON_BODY_LIMIT = 1024 * 1024;
@@ -296,17 +295,6 @@ function parseThreadBinding(value) {
     throw new ApiError(400, "INVALID_FIELD", "Thread project identity is invalid");
   }
   return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
-}
-
-function parseWorkflowId(value) {
-  const workflowId = stringField(value, "workflowId", {
-    nullable: true,
-    maxLength: 128,
-  });
-  if (workflowId === "") {
-    throw new ApiError(400, "INVALID_FIELD", "'workflowId' cannot be empty");
-  }
-  return workflowId;
 }
 
 function parseAssigneeTarget(value) {
@@ -747,7 +735,6 @@ function taskFromRow(row) {
       name: row.assignee_name,
       avatarUrl: row.assignee_avatar_url,
     },
-    workflowId: row.workflow_id,
     developmentContext: developmentContextFromRow(row),
     startDate: row.start_date,
     dueDate: row.due_date,
@@ -946,15 +933,7 @@ async function hydrateTask(env, row, activityComments = null, activityChanges = 
       WHERE attachments.task_id = ?
         AND attachments.comment_id IS NULL
         AND attachments.content_type LIKE 'image/%'
-        AND (
-          attachments.kind = 'attachment'
-          OR instr(tasks.description, 'api/attachments/' || attachments.id || '/content') > 0
-          OR EXISTS (
-            SELECT 1 FROM comments
-            WHERE comments.task_id = attachments.task_id
-              AND instr(comments.body, 'api/attachments/' || attachments.id || '/content') > 0
-          )
-        )
+        AND instr(tasks.description, 'api/attachments/' || attachments.id || '/content') > 0
       ORDER BY attachments.created_at, attachments.id
       LIMIT 1
     `).bind(task.id).first(),
@@ -1081,7 +1060,6 @@ function parseTaskCreate(body) {
     "threadId",
     "threadBinding",
     "assigneeTarget",
-    "workflowId",
     "developmentContext",
     "startDate",
     "dueDate",
@@ -1098,7 +1076,6 @@ function parseTaskCreate(body) {
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
-    workflowId: parseWorkflowId(body.workflowId ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
     startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
@@ -1123,7 +1100,6 @@ function parseTaskPatch(body) {
     "threadId",
     "threadBinding",
     "assigneeTarget",
-    "workflowId",
     "developmentContext",
     "startDate",
     "dueDate",
@@ -1140,7 +1116,6 @@ function parseTaskPatch(body) {
   if (body.status !== undefined) changes.status = parseStatus(body.status);
   if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
-  if (body.workflowId !== undefined) changes.workflowId = parseWorkflowId(body.workflowId);
   if (body.developmentContext !== undefined) {
     changes.developmentContext = parseDevelopmentContext(body.developmentContext);
   }
@@ -1229,125 +1204,6 @@ function parseTaskFilters(searchParams) {
     );
   }
   return { projectId, status, archived };
-}
-
-function sanitizeWorkflowNodeData(value) {
-  if (Array.isArray(value)) return value.map(sanitizeWorkflowNodeData);
-  if (value === null || typeof value !== "object") return value;
-
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => key !== "gitWorktreePath")
-      .map(([key, child]) => [key, sanitizeWorkflowNodeData(child)]),
-  );
-}
-
-function parseWorkflowWorkspace(value) {
-  assertPlainObject(value);
-  assertAllowedKeys(value, new Set(["version", "tabs", "activeWorkflowId", "snapshots"]));
-  if (value.version !== 1) {
-    throw new ApiError(400, "INVALID_FIELD", "'workspace.version' must be 1");
-  }
-  if (!Array.isArray(value.tabs) || value.tabs.length === 0 || value.tabs.length > 100) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'workspace.tabs' must contain 1 to 100 workflows",
-    );
-  }
-  const tabs = value.tabs.map((tab, index) => {
-    assertPlainObject(tab);
-    assertAllowedKeys(tab, new Set(["id", "name"]));
-    return {
-      id: stringField(tab.id, `workspace.tabs[${index}].id`, {
-        required: true,
-        maxLength: 128,
-      }),
-      name: stringField(tab.name, `workspace.tabs[${index}].name`, {
-        required: true,
-        maxLength: 120,
-      }),
-    };
-  });
-  if (new Set(tabs.map((tab) => tab.id)).size !== tabs.length) {
-    throw new ApiError(400, "INVALID_FIELD", "'workspace.tabs' ids must be unique");
-  }
-  const activeWorkflowId = stringField(
-    value.activeWorkflowId,
-    "workspace.activeWorkflowId",
-    { required: true, maxLength: 128 },
-  );
-  if (!tabs.some((tab) => tab.id === activeWorkflowId)) {
-    throw new ApiError(
-      400,
-      "INVALID_FIELD",
-      "'workspace.activeWorkflowId' must reference a workflow tab",
-    );
-  }
-  assertPlainObject(value.snapshots);
-  const snapshots = {};
-  for (const tab of tabs) {
-    const snapshot = value.snapshots[tab.id];
-    assertPlainObject(snapshot);
-    assertAllowedKeys(snapshot, new Set(["nodes", "edges", "flow", "selectedNodeId"]));
-    if (!Array.isArray(snapshot.nodes) || snapshot.nodes.length > 10_000) {
-      throw new ApiError(
-        400,
-        "INVALID_FIELD",
-        `'workspace.snapshots.${tab.id}.nodes' must be an array`,
-      );
-    }
-    if (
-      snapshot.flow === undefined
-      && (!Array.isArray(snapshot.edges) || snapshot.edges.length > 20_000)
-    ) {
-      throw new ApiError(
-        400,
-        "INVALID_FIELD",
-        `'workspace.snapshots.${tab.id}.edges' must be an array`,
-      );
-    }
-    if (snapshot.flow !== undefined && snapshot.edges !== undefined) {
-      throw new ApiError(
-        400,
-        "INVALID_FIELD",
-        `'workspace.snapshots.${tab.id}' cannot contain both 'flow' and 'edges'`,
-      );
-    }
-    const selectedNodeId = stringField(
-      snapshot.selectedNodeId ?? null,
-      `workspace.snapshots.${tab.id}.selectedNodeId`,
-      { nullable: true, maxLength: 256 },
-    );
-    const nodes = snapshot.nodes.map((node) => {
-      if (
-        node === null
-        || Array.isArray(node)
-        || typeof node !== "object"
-        || node.data === null
-        || Array.isArray(node.data)
-        || typeof node.data !== "object"
-      ) {
-        return node;
-      }
-      return { ...node, data: sanitizeWorkflowNodeData(node.data) };
-    });
-    try {
-      snapshots[tab.id] = normalizeWorkflowSnapshot({
-        nodes,
-        edges: snapshot.edges,
-        flow: snapshot.flow,
-        selectedNodeId,
-      });
-    } catch (error) {
-      throw new ApiError(
-        400,
-        "INVALID_FIELD",
-        `'workspace.snapshots.${tab.id}' is not a valid workflow: ${error.message}`,
-      );
-    }
-  }
-  return { version: 1, tabs, activeWorkflowId, snapshots };
 }
 
 async function listProjects(env) {
@@ -1579,7 +1435,7 @@ async function createTask(env, input, actor) {
         thread_codex_host_id, thread_workspace_path,
         creator_type, creator_id, creator_name, creator_avatar_url,
         assignee_type, assignee_id, assignee_name, assignee_avatar_url,
-        workflow_id, development_context_type, development_branch,
+        development_context_type, development_branch,
         start_date, due_date, recurrence_interval, recurrence_unit,
         archived_at, version, created_at, updated_at
       )
@@ -1598,7 +1454,7 @@ async function createTask(env, input, actor) {
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?,
+        ?, ?,
         ?, ?, ?, ?,
         NULL, 1, ?, ?
       FROM projects
@@ -1623,7 +1479,6 @@ async function createTask(env, input, actor) {
       assignee.id,
       assignee.name,
       assignee.avatarUrl,
-      input.workflowId,
       input.developmentContext?.type ?? null,
       input.developmentContext?.branch ?? null,
       input.startDate,
@@ -1734,7 +1589,6 @@ async function updateTask(env, id, input, actor) {
     status: "status",
     priority: "priority",
     labels: "labels",
-    workflowId: "workflow_id",
     startDate: "start_date",
     dueDate: "due_date",
   };
@@ -2349,84 +2203,6 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
   };
 }
 
-async function getWorkflow(env, projectId) {
-  await requireProject(env, projectId);
-  const row = await env.DB.prepare(`
-    SELECT project_id, workspace, version, updated_at
-    FROM workflow_workspaces
-    WHERE project_id = ?
-  `).bind(projectId).first();
-  return row
-    ? {
-        projectId: row.project_id,
-        workspace: JSON.parse(row.workspace),
-        version: row.version,
-        updatedAt: row.updated_at,
-      }
-    : { projectId, workspace: null, version: 0, updatedAt: null };
-}
-
-async function saveWorkflow(env, projectId, expectedVersion, workspace) {
-  await requireProject(env, projectId);
-  const current = await env.DB.prepare(`
-    SELECT version FROM workflow_workspaces WHERE project_id = ?
-  `).bind(projectId).first();
-  const actualVersion = current?.version ?? 0;
-  if (actualVersion !== expectedVersion) {
-    throw new ApiError(
-      409,
-      "VERSION_CONFLICT",
-      "Workflow was changed by another client",
-      { expectedVersion, actualVersion },
-    );
-  }
-  const timestamp = now();
-  if (current) {
-    const result = await env.DB.prepare(`
-      UPDATE workflow_workspaces
-      SET workspace = ?, version = version + 1, updated_at = ?
-      WHERE project_id = ? AND version = ?
-    `).bind(
-      JSON.stringify(workspace),
-      timestamp,
-      projectId,
-      expectedVersion,
-    ).run();
-    if (!changed(result)) {
-      const latest = await env.DB.prepare(`
-        SELECT version FROM workflow_workspaces WHERE project_id = ?
-      `).bind(projectId).first();
-      throw new ApiError(
-        409,
-        "VERSION_CONFLICT",
-        "Workflow was changed by another client",
-        { expectedVersion, actualVersion: latest?.version ?? 0 },
-      );
-    }
-  } else {
-    try {
-      await env.DB.prepare(`
-        INSERT INTO workflow_workspaces (project_id, workspace, version, updated_at)
-        VALUES (?, ?, 1, ?)
-      `).bind(projectId, JSON.stringify(workspace), timestamp).run();
-    } catch (error) {
-      if (String(error.message).includes("UNIQUE constraint failed")) {
-        const latest = await env.DB.prepare(`
-          SELECT version FROM workflow_workspaces WHERE project_id = ?
-        `).bind(projectId).first();
-        throw new ApiError(
-          409,
-          "VERSION_CONFLICT",
-          "Workflow was changed by another client",
-          { expectedVersion, actualVersion: latest.version },
-        );
-      }
-      throw error;
-    }
-  }
-  return getWorkflow(env, projectId);
-}
-
 async function getProjectReadme(env, projectId) {
   const project = await getProject(env, projectId);
   if (!project) {
@@ -2821,7 +2597,6 @@ async function routeApi(request, env, actor, url) {
 
   if (
     pathname === "/api/device-workspaces"
-    || pathname === "/api/workflow-capabilities"
     || /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname)
   ) {
     if (request.method !== "GET") methodNotAllowed(["GET"]);
@@ -2877,30 +2652,6 @@ async function routeApi(request, env, actor, url) {
       ? await addProjectLabel(env, projectId, label)
       : await deleteProjectLabel(env, projectId, label);
     return json(200, { project });
-  }
-
-  const workflowMatch = pathname.match(
-    /^\/api\/projects\/([^/]+)\/workflow-workspace$/,
-  );
-  if (workflowMatch) {
-    requireNoQuery(url, "Workflow workspace routes");
-    const projectId = validateProjectId(
-      decodePathPart(workflowMatch[1], "Project id"),
-    );
-    if (request.method === "GET") {
-      return json(200, { workflow: await getWorkflow(env, projectId) });
-    }
-    if (request.method === "PUT") {
-      const body = await readJson(request);
-      assertPlainObject(body);
-      assertAllowedKeys(body, new Set(["version", "workspace"]));
-      const version = parseVersion(body.version, { allowZero: true });
-      const workspace = parseWorkflowWorkspace(body.workspace);
-      return json(200, {
-        workflow: await saveWorkflow(env, projectId, version, workspace),
-      });
-    }
-    methodNotAllowed(["GET", "PUT"]);
   }
 
   const projectReadmeMatch = pathname.match(

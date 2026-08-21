@@ -27,9 +27,7 @@ const TABLE_ORDER = [
   "comments",
   "task_relations",
   "attachments",
-  "workflow_workspaces",
 ];
-const LOCAL_WORKFLOW_PATH_FIELDS = new Set(["gitWorktreePath"]);
 const SORT_FIELDS = {
   projects: ["id"],
   project_readmes: ["project_id"],
@@ -37,7 +35,6 @@ const SORT_FIELDS = {
   comments: ["task_id", "created_at", "id"],
   task_relations: ["source_task_id", "target_task_id", "relation_type"],
   attachments: ["task_id", "comment_id", "created_at", "id"],
-  workflow_workspaces: ["project_id"],
 };
 function compareValues(left, right) {
   if (left === right) return 0;
@@ -59,31 +56,6 @@ function sortRows(table, rows) {
 
 function sqliteString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
-}
-
-function sanitizeWorkflowValue(value) {
-  if (Array.isArray(value)) return value.map(sanitizeWorkflowValue);
-  if (!value || typeof value !== "object") return value;
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      LOCAL_WORKFLOW_PATH_FIELDS.has(key) ? null : sanitizeWorkflowValue(child),
-    ]),
-  );
-}
-
-function sanitizeWorkflowRow(row) {
-  let workspace;
-  try {
-    workspace = JSON.parse(row.workspace);
-  } catch {
-    throw new Error(`Workflow workspace for project '${row.project_id}' is not valid JSON`);
-  }
-  return {
-    ...row,
-    workspace: JSON.stringify(sanitizeWorkflowValue(workspace)),
-  };
 }
 
 function projectRowsWithLabels(tables) {
@@ -113,7 +85,6 @@ function buildProjectCounts(tables) {
       comments: 0,
       attachments: 0,
       task_relations: 0,
-      workflow_workspaces: 0,
     };
   }
 
@@ -153,13 +124,6 @@ function buildProjectCounts(tables) {
     }
     counts[projectId].task_relations += 1;
   }
-  for (const workspace of tables.workflow_workspaces) {
-    if (!counts[workspace.project_id]) {
-      throw new Error(`Workflow workspace references unknown project '${workspace.project_id}'`);
-    }
-    counts[workspace.project_id].workflow_workspaces += 1;
-  }
-
   return Object.fromEntries(
     Object.entries(counts).sort(([left], [right]) => (left < right ? -1 : 1)),
   );
@@ -381,8 +345,6 @@ export async function createCloudMigrationBundle({
     ...task,
     worktree_path: null,
   }));
-  tables.workflow_workspaces = tables.workflow_workspaces.map(sanitizeWorkflowRow);
-
   return {
     schemaVersion: SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
@@ -404,7 +366,7 @@ const CLOUD_COLUMNS = {
     "sort_order", "thread_id", "thread_codex_project_id", "thread_codex_project_kind",
     "thread_codex_host_id", "thread_workspace_path", "creator_type", "creator_id", "creator_name",
     "creator_avatar_url", "assignee_type", "assignee_id", "assignee_name",
-    "assignee_avatar_url", "workflow_id", "development_context_type", "development_branch",
+    "assignee_avatar_url", "development_context_type", "development_branch",
     "due_date", "recurrence_interval", "recurrence_unit", "archived_at", "version",
     "created_at", "updated_at",
   ],
@@ -416,7 +378,6 @@ const CLOUD_COLUMNS = {
   ],
   task_relations: ["relation_type", "source_task_id", "target_task_id", "created_at"],
   attachments: ["id", "task_id", "comment_id", "kind", "filename", "content_type", "size", "created_at"],
-  workflow_workspaces: ["project_id", "workspace", "version", "updated_at"],
 };
 
 function cloudTaskRow(task) {
@@ -532,9 +493,7 @@ export const CLOUD_PROJECT_COUNTS_SQL = `
     (SELECT COUNT(*) FROM attachments a JOIN tasks t ON t.id = a.task_id
       WHERE t.project_id = p.id) AS attachments,
     (SELECT COUNT(*) FROM task_relations r JOIN tasks t ON t.id = r.source_task_id
-      WHERE t.project_id = p.id) AS task_relations,
-    (SELECT COUNT(*) FROM workflow_workspaces w
-      WHERE w.project_id = p.id) AS workflow_workspaces
+      WHERE t.project_id = p.id) AS task_relations
   FROM projects p ORDER BY p.id
 `;
 

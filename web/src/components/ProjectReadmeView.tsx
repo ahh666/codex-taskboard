@@ -4,6 +4,7 @@ import { useTaskboardI18n } from "../i18n";
 import type { ActorIdentity, Project, ProjectReadme } from "../types";
 import { LinearIcon } from "./LinearIcon";
 import { MarkdownDocument } from "./MarkdownDocument";
+import { EditIcon, PlusIcon } from "./SemanticIcons";
 import "./ProjectReadmeView.css";
 
 interface ProjectReadmeViewProps {
@@ -173,7 +174,7 @@ export function ProjectReadmeView({
               className="button secondary project-readme-edit-btn"
               onClick={handleStartEditing}
             >
-              <LinearIcon name="write" />
+              <EditIcon color="currentColor" />
               <span>{hasContent ? text("编辑 Readme", "Edit Readme") : text("编写 Readme", "Write Readme")}</span>
             </button>
           ) : (
@@ -186,7 +187,7 @@ export function ProjectReadmeView({
                   className={`project-readme-tab${editTab === "write" ? " is-active" : ""}`}
                   onClick={() => setEditTab("write")}
                 >
-                  <LinearIcon name="write" />
+                  <EditIcon color="currentColor" />
                   <span>{text("编辑", "Write")}</span>
                 </button>
                 <button
@@ -307,7 +308,7 @@ export function ProjectReadmeView({
             className="button primary project-readme-create-btn"
             onClick={handleStartEditing}
           >
-            <LinearIcon name="plus" />
+            <PlusIcon color="currentColor" size={16} />
             <span>{text("开始编写 Readme", "Create Project Readme")}</span>
           </button>
         </div>

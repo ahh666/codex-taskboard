@@ -8,6 +8,7 @@ import {
   type AutomationReasoningEffort,
 } from "../../../shared/taskboard-automation-options.mjs";
 import { LinearIcon } from "./LinearIcon";
+import { ProjectIcon, RecurrenceIcon } from "./SemanticIcons";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskboardIcon } from "./TaskboardIcon";
 import { useTaskboardI18n } from "../i18n";
@@ -230,7 +231,7 @@ export function ProjectAutomationMenu({
           options={[5, 10, 15, 30, 60].map((minutes) => ({
             value: String(minutes),
             label: text(`${minutes} 分钟`, `${minutes} min`),
-            icon: <LinearIcon name="recurrence" />,
+            icon: <RecurrenceIcon color="currentColor" size={14} />,
           }))}
           open={pickerMenu === "interval"}
           disabled={disabled}
@@ -251,7 +252,7 @@ export function ProjectAutomationMenu({
           options={AUTOMATION_MODELS.map((model) => ({
             value: model.slug,
             label: model.label,
-            icon: <LinearIcon name="project" />,
+            icon: <ProjectIcon color="currentColor" size={14} />,
           }))}
           open={pickerMenu === "model"}
           disabled={disabled}
