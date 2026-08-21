@@ -7,9 +7,9 @@ import {
   OTHER_TASK_TABS,
   type OtherTaskTab,
 } from "../issueBoardStatuses";
-import { LinearIcon, LinearStatusIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import { DeleteIcon, PlusIcon, RefreshIcon, StatusIcon } from "./SemanticIcons";
 import { TaskCard } from "./TaskCard";
-import { TaskboardIcon } from "./TaskboardIcon";
 
 function archivedDate(
   value: string | null,
@@ -48,7 +48,7 @@ function ArchivedTaskCard({
       <h3>{task.title}</h3>
       <div className="archived-task-footer">
         <span className="archived-task-status">
-          <LinearStatusIcon status={task.status} />
+          <StatusIcon status={task.status} size={14} />
           {taskStatusLabel(language, task.status)}
         </span>
         {task.source === "local" && (
@@ -59,7 +59,7 @@ function ArchivedTaskCard({
               disabled={busy}
               onClick={() => onRestore(task)}
             >
-              <LinearIcon name="recurrence" />
+              <RefreshIcon color="currentColor" />
               {restoring ? text("恢复中…", "Restoring…") : text("恢复", "Restore")}
             </button>
             <button
@@ -70,7 +70,7 @@ function ArchivedTaskCard({
               disabled={busy}
               onClick={() => onDelete(task)}
             >
-              <LinearIcon name="trash" />
+              <DeleteIcon color="currentColor" />
             </button>
           </>
         )}
@@ -242,7 +242,7 @@ export function OtherTasksPanel({
           title={text(`添加到${activeLabel}`, `Add to ${activeLabel}`)}
           onClick={() => onCreate(activeTab)}
         >
-          <TaskboardIcon name="sidebarAdd" />
+          <PlusIcon color="currentColor" size={11} />
         </button>
       )}
 
@@ -308,7 +308,11 @@ export function OtherTasksPanel({
         })}
         {tasks.length === 0 && (
           <div className="other-tasks-empty">
-            <LinearIcon name={hasActiveFilters ? "search" : archived ? "trash" : "panel"} />
+            {hasActiveFilters
+              ? <LinearIcon name="search" />
+              : archived
+                ? <DeleteIcon color="currentColor" />
+                : <LinearIcon name="panel" />}
             <strong>{hasActiveFilters
               ? text("当前筛选下无匹配议题", "No issues match the current filters")
               : text("暂无议题", "No issues")}</strong>

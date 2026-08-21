@@ -25,10 +25,21 @@ import {
   assigneeTargetForActor,
 } from "../actors";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS, StatusIcon } from "./BoardColumn";
+import { STATUS_DETAILS } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
 import { IssuePickerContent } from "./IssueRelations";
-import { LinearIcon, LinearPriorityIcon } from "./LinearIcon";
+import { LinearIcon } from "./LinearIcon";
+import {
+  AttachmentIcon,
+  BranchIcon,
+  DueDateIcon,
+  MoreIcon,
+  PlusIcon,
+  PriorityIcon,
+  RecurrenceIcon,
+  RelationIcon,
+  StatusIcon,
+} from "./SemanticIcons";
 import {
   fileKey,
   MAX_ATTACHMENT_SIZE,
@@ -600,7 +611,7 @@ export function TaskEditor({
               options={TASK_STATUSES.map((value) => ({
                 value,
                 label: taskStatusLabel(language, value),
-                icon: <StatusIcon status={value} />,
+                icon: <StatusIcon status={value} size={14} />,
                 className: `status-icon-${STATUS_DETAILS[value].tone}`,
               }))}
               open={menu === "status"}
@@ -614,7 +625,7 @@ export function TaskEditor({
               options={TASK_PRIORITIES.map((value) => ({
                 value,
                 label: taskPriorityLabel(language, value),
-                icon: <LinearPriorityIcon priority={value} />,
+                icon: <PriorityIcon priority={value} size={14} />,
                 className: `priority-${value}`,
               }))}
               open={menu === "priority"}
@@ -660,12 +671,14 @@ export function TaskEditor({
                   label: developmentScanLoading
                     ? text("正在扫描 Git…", "Scanning Git…")
                     : text("分支 / Worktree", "Branch / worktree"),
-                  icon: <LinearIcon name="branch" />,
+                  icon: <BranchIcon color="currentColor" size={14} />,
                 },
                 ...developmentOptions.map((context) => ({
                   value: contextValue(context),
                   label: contextLabel(context, text),
-                  icon: <LinearIcon name={context.type === "branch" ? "branch" : "folder"} />,
+                  icon: context.type === "branch"
+                    ? <BranchIcon color="currentColor" size={14} />
+                    : <LinearIcon name="folder" />,
                 })),
               ]}
               open={menu === "development"}
@@ -726,7 +739,7 @@ export function TaskEditor({
             })}
 
             <div className="composer-menu-anchor" ref={moreMenuRef}>
-              <button className="property-control property-more" type="button" aria-label={text("更多属性", "More properties")} onClick={toggleMoreMenu}><LinearIcon name="more" /></button>
+              <button className="property-control property-more" type="button" aria-label={text("更多属性", "More properties")} onClick={toggleMoreMenu}><MoreIcon color="currentColor" /></button>
               {menu === "more" && (
                 <div
                   className="composer-popover more-popover"
@@ -739,14 +752,14 @@ export function TaskEditor({
                     left: "auto",
                   } : undefined}
                 >
-                  <button type="button" onClick={() => setMenu("due")}><span><LinearIcon name="calendarAdd" /></span><strong>{text("设置截止日期", "Set due date")}</strong><kbd>⇧ D</kbd><b><LinearIcon name="chevronRight" /></b></button>
-                  <button type="button" onClick={() => setMenu("recurrence")}><span><LinearIcon name="recurrence" /></span><strong>{text("设置重复…", "Set recurrence…")}</strong><b><LinearIcon name="chevronRight" /></b></button>
+                  <button type="button" onClick={() => setMenu("due")}><span><DueDateIcon color="currentColor" /></span><strong>{text("设置截止日期", "Set due date")}</strong><kbd>⇧ D</kbd><b><LinearIcon name="chevronRight" /></b></button>
+                  <button type="button" onClick={() => setMenu("recurrence")}><span><RecurrenceIcon color="currentColor" /></span><strong>{text("设置重复…", "Set recurrence…")}</strong><b><LinearIcon name="chevronRight" /></b></button>
                   {!task && (
                     <>
                       <div className="more-popover-divider" />
-                      <button className={relationMenu === "subIssue" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "subIssue"} onClick={() => setRelationMenu("subIssue")}><span><LinearIcon name="plus" /></span><strong>{text("添加子议题", "Add sub-issue")}</strong>{selectedSubIssues.length > 0 && <small>{text(`${selectedSubIssues.length} 个已选`, `${selectedSubIssues.length} selected`)}</small>}<b><LinearIcon name="chevronRight" /></b></button>
-                      <button className={relationMenu === "parent" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "parent"} onClick={() => setRelationMenu("parent")}><span><LinearIcon name="plus" /></span><strong>{text("添加父议题", "Add parent issue")}</strong>{selectedParent && <small>{selectedParent.externalKey ?? selectedParent.identifier}</small>}<b><LinearIcon name="chevronRight" /></b></button>
-                      <button className={relationMenu === "related" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "related"} onClick={() => setRelationMenu("related")}><span><LinearIcon name="link" /></span><strong>{text("添加关联议题", "Add related issue")}</strong>{selectedRelated.length > 0 && <small>{text(`${selectedRelated.length} 个已选`, `${selectedRelated.length} selected`)}</small>}<b><LinearIcon name="chevronRight" /></b></button>
+                      <button className={relationMenu === "subIssue" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "subIssue"} onClick={() => setRelationMenu("subIssue")}><span><PlusIcon color="currentColor" size={16} /></span><strong>{text("添加子议题", "Add sub-issue")}</strong>{selectedSubIssues.length > 0 && <small>{text(`${selectedSubIssues.length} 个已选`, `${selectedSubIssues.length} selected`)}</small>}<b><LinearIcon name="chevronRight" /></b></button>
+                      <button className={relationMenu === "parent" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "parent"} onClick={() => setRelationMenu("parent")}><span><PlusIcon color="currentColor" size={16} /></span><strong>{text("添加父议题", "Add parent issue")}</strong>{selectedParent && <small>{selectedParent.externalKey ?? selectedParent.identifier}</small>}<b><LinearIcon name="chevronRight" /></b></button>
+                      <button className={relationMenu === "related" ? "is-open" : undefined} type="button" role="menuitem" aria-haspopup="menu" aria-expanded={relationMenu === "related"} onClick={() => setRelationMenu("related")}><span><RelationIcon color="currentColor" size={16} /></span><strong>{text("添加关联议题", "Add related issue")}</strong>{selectedRelated.length > 0 && <small>{text(`${selectedRelated.length} 个已选`, `${selectedRelated.length} selected`)}</small>}<b><LinearIcon name="chevronRight" /></b></button>
                       {relationMenu && (
                         <div className="issue-relation-popover task-create-relation-submenu" aria-label={text("选择关系议题", "Select relation issue")}>
                           <IssuePickerContent
@@ -799,7 +812,7 @@ export function TaskEditor({
             {!task && (
               <>
                 <button className="composer-attach-icon" type="button" disabled={saving} onClick={() => attachmentInputRef.current?.click()} aria-label={text("上传附件", "Upload attachments")}>
-                  <LinearIcon name="attachment" />{attachments.length > 0 && <span>{attachments.length}</span>}
+                  <AttachmentIcon color="currentColor" />{attachments.length > 0 && <span>{attachments.length}</span>}
                 </button>
                 <input ref={attachmentInputRef} type="file" multiple hidden onChange={(event) => { if (event.currentTarget.files) addAttachments(event.currentTarget.files); event.currentTarget.value = ""; }} />
               </>

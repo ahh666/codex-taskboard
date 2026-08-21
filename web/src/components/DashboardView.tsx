@@ -13,7 +13,7 @@ import type {
 } from "../taskConversations";
 import type { ActorIdentity, ProjectSummary, Task } from "../types";
 import { ActorAvatar } from "./ActorAvatar";
-import { LinearPriorityIcon } from "./LinearIcon";
+import { PriorityIcon } from "./SemanticIcons";
 import { TaskConversationMenu } from "./TaskConversationMenu";
 
 interface DashboardViewProps {
@@ -530,7 +530,7 @@ export function DashboardView({
               {priorityCounts.map((item) => (
                 <div className={`dashboard-priority-row priority-${item.priority}`} key={item.priority}>
                   <span className="dashboard-priority-name">
-                    <LinearPriorityIcon priority={item.priority} />
+                    <PriorityIcon priority={item.priority} size={13} />
                     {item.label}
                   </span>
                   <span className="dashboard-priority-track">

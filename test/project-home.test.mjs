@@ -16,7 +16,7 @@ test("the project switcher merges live Codex projects with persisted Taskboard p
   assert.match(appSource, /persistedById/);
   assert.match(appSource, /name: project\.id === GLOBAL_PROJECT_ID\s*\? text\("临时任务", "Temporary tasks"\)\s*: persistedById\.get\(project\.id\)\?\.name \?\? project\.name/);
   assert.match(appSource, /for \(const project of projects\) \{[\s\S]*?inCodex: false,[\s\S]*?persisted: true/);
-  assert.match(appSource, /projectChoices\.map\(\(project\) => \(/);
+  assert.match(appSource, /projectMenuChoices\.map\(\(project\) => \(/);
   assert.match(appSource, /createProjectRequest/);
   assert.match(apiSource, /export async function createProject/);
 });

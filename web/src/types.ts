@@ -318,35 +318,6 @@ export interface AiChatThreadSnapshot {
   runs: AiChatRun[];
 }
 
-export interface WorkflowCapabilityOption {
-  id: string;
-  label: string;
-  scope: "user" | "repo" | "system" | "admin";
-}
-
-export interface WorkflowMcpServerOption {
-  id: string;
-  label: string;
-  transport: string;
-}
-
-export interface WorkflowCapabilities {
-  skills: WorkflowCapabilityOption[];
-  mcpServers: WorkflowMcpServerOption[];
-}
-
-export interface WorkflowOption {
-  id: string;
-  name: string;
-}
-
-export interface WorkflowWorkspaceRecord<T = unknown> {
-  projectId: string;
-  workspace: T | null;
-  version: number;
-  updatedAt: string | null;
-}
-
 export interface CodexProjectIdentity {
   codexProjectId: string;
   codexProjectKind: "local" | "remote";
@@ -440,7 +411,6 @@ export interface Task {
   creatorName: string;
   creatorAvatarUrl: string | null;
   assignee: ActorIdentity;
-  workflowId: string | null;
   developmentContext: DevelopmentContext | null;
   startDate: string | null;
   dueDate: string | null;

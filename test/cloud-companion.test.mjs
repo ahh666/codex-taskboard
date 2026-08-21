@@ -376,7 +376,6 @@ test("cloud routing keeps machine-specific capability endpoints in the local com
     "/health",
     "/api/meta",
     "/api/device-workspaces",
-    "/api/workflow-capabilities",
     "/api/projects/portfolio/development-contexts",
     "/api/local/cloud-session",
     "/api/local/project-mappings/portfolio",
@@ -386,7 +385,6 @@ test("cloud routing keeps machine-specific capability endpoints in the local com
 
   for (const pathname of [
     "/api/projects",
-    "/api/projects/portfolio/workflow-workspace",
     "/api/tasks",
     "/api/tasks/PORTFOLIO-1",
     "/api/comments/comment-1",
@@ -515,66 +513,6 @@ test("task mutations do not send absolute worktree paths to cloud", async () => 
   });
 });
 
-test("workflow mutations remove structured git worktree paths without altering other path fields or text", async () => {
-  const { createCloudProxy } = await importCloudProxy();
-  let upstreamBody;
-  const proxy = createCloudProxy({
-    configStore: memoryConfigStore(),
-    fetch: async (_url, init) => {
-      upstreamBody = JSON.parse(init.body);
-      return jsonResponse({ workflow: { projectId: "portfolio", version: 5 } });
-    },
-  });
-
-  await proxy.forward(new Request(
-    "http://127.0.0.1:47823/api/projects/portfolio/workflow-workspace",
-    {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        version: 4,
-        workspace: {
-          version: 1,
-          tabs: [{ id: "delivery", name: "Delivery" }],
-          activeWorkflowId: "delivery",
-          snapshots: {
-            delivery: {
-              nodes: [{
-                id: "git",
-                data: {
-                  kind: "git",
-                  branch: "feature/cloud",
-                  gitWorktreePath: "/Users/alice/.codex/worktrees/cloud",
-                  description: "Keep this text: /Users/alice/.codex/worktrees/cloud",
-                  config: { path: "/third-party/runtime/path" },
-                  planItems: [{
-                    title: "Nested Git step",
-                    gitWorktreePath: "/Users/alice/.codex/worktrees/nested",
-                    path: "/third-party/nested/path",
-                  }],
-                },
-              }],
-              flow: { version: 2, root: { items: [] } },
-              selectedNodeId: "git",
-            },
-          },
-        },
-      }),
-    },
-  ));
-
-  const data = upstreamBody.workspace.snapshots.delivery.nodes[0].data;
-  assert.equal(Object.hasOwn(data, "gitWorktreePath"), false);
-  assert.equal(Object.hasOwn(data.planItems[0], "gitWorktreePath"), false);
-  assert.equal(data.branch, "feature/cloud");
-  assert.equal(
-    data.description,
-    "Keep this text: /Users/alice/.codex/worktrees/cloud",
-  );
-  assert.equal(data.config.path, "/third-party/runtime/path");
-  assert.equal(data.planItems[0].path, "/third-party/nested/path");
-});
-
 test("two companions map the same cloud project to different local paths", async () => {
   const { createCloudConfigStore } = await importCloudConfig();
   const alice = createCloudConfigStore({
@@ -682,7 +620,6 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
     for (const pathname of [
       "/api/meta",
       "/api/device-workspaces",
-      "/api/workflow-capabilities",
       "/api/projects/portfolio/development-contexts",
     ]) {
       const response = await fetch(`${lanBaseUrl}${pathname}`);

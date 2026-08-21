@@ -31,9 +31,14 @@ import {
 } from "../api";
 import { useTaskboardI18n } from "../i18n";
 import { readIssueIdentifier } from "../issueRoute";
-import { ColumnStatusIcon, STATUS_DETAILS } from "./BoardColumn";
+import { STATUS_DETAILS } from "./BoardColumn";
 import { clipboardImages, fileKey, MAX_ATTACHMENT_SIZE } from "./PendingAttachments";
 import { LinearIcon } from "./LinearIcon";
+import {
+  ConversationIcon,
+  ProjectIcon,
+  StatusIcon,
+} from "./SemanticIcons";
 import {
   ComposerCompletionMenu,
   type ComposerCompletionGroup,
@@ -693,10 +698,18 @@ function inlineMediaClipboardHtml(
       wrapper.append(markdown);
       continue;
     }
-    const pendingImage = ownerDocument.createElement("span");
-    pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
-    pendingImage.textContent = segment.file.name;
-    wrapper.append(pendingImage);
+    if (segment.dataUrl) {
+      const pendingImage = ownerDocument.createElement("img");
+      pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
+      pendingImage.src = segment.dataUrl;
+      pendingImage.alt = segment.file.name;
+      wrapper.append(pendingImage);
+    } else {
+      const pendingImage = ownerDocument.createElement("span");
+      pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
+      pendingImage.textContent = segment.file.name;
+      wrapper.append(pendingImage);
+    }
   }
 
   return wrapper.outerHTML;
@@ -970,7 +983,7 @@ function IssueReferenceChip({
       <span className="issue-reference-identity">
         {task && (
           <span className={`status-icon issue-reference-status status-icon-${STATUS_DETAILS[task.status].tone}`}>
-            <ColumnStatusIcon status={task.status === "backlog" ? "todo" : task.status} />
+            <StatusIcon status={task.status} size={15} />
           </span>
         )}
         <span className="issue-reference-id">{displayIdentifier}</span>
@@ -1015,7 +1028,9 @@ function ComposerReferenceChip({
         onRemove();
       }}
     >
-      <LinearIcon name={segment.type === "skill-reference" ? "project" : "conversation"} />
+      {segment.type === "skill-reference"
+        ? <ProjectIcon color="currentColor" />
+        : <ConversationIcon color="currentColor" />}
       <span>{segment.label}</span>
     </button>
   );
@@ -1111,7 +1126,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             : candidate?.kind === "agent"
               ? "conversation"
               : candidate?.kind === "slashAction"
-                ? "terminal"
+                ? "action"
                 : "project",
           selectableIndex,
         });
@@ -1152,7 +1167,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             element.textContent = segment.text;
             if (segment.text.endsWith("\n")) element.append(document.createElement("br"));
           } else {
-            element.append(document.createElement("br"));
+            element.append(document.createTextNode(""), document.createElement("br"));
           }
         } else {
           element.className = isInlineReference(segment)
@@ -1417,7 +1432,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         if (segment.type !== "text" && offset <= current) {
           return { node: root, offset: Math.max(childIndex, 0) };
         }
-        if (segment.type !== "text" && offset <= current + length) {
+        if (segment.type !== "text" && offset < current + length) {
           return { node: root, offset: Math.max(childIndex + 1, 0) };
         }
         current += length;
@@ -1763,6 +1778,29 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       applyRangeReplacement(start, end, insertion);
     }
 
+    function copyContent(event: ClipboardEvent<HTMLDivElement>): {
+      range: { start: number; end: number };
+      segments: InlineMediaSegment[];
+    } | null {
+      const selection = event.currentTarget.ownerDocument.getSelection();
+      if (!selection || selection.rangeCount === 0) return null;
+      const selectedRange = selection.getRangeAt(0);
+      if (
+        !event.currentTarget.contains(selectedRange.startContainer)
+        || !event.currentTarget.contains(selectedRange.endContainer)
+      ) return null;
+      const range = currentLogicalRange();
+      if (!range || range.start === range.end) return null;
+      const copiedSegments = inlineMediaRangeSegments(segments, range.start, range.end);
+      event.preventDefault();
+      writeInlineMediaClipboard(
+        event.clipboardData,
+        copiedSegments,
+        event.currentTarget.ownerDocument,
+      );
+      return { range, segments: copiedSegments };
+    }
+
     function pasteContent(event: ClipboardEvent<HTMLDivElement>) {
       const range = currentLogicalRange();
       if (!range) return;
@@ -1956,23 +1994,23 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
           onDragOver={dragContent}
           onDrop={dropContent}
           onPaste={pasteContent}
-          onCopy={(event) => {
-            const selection = event.currentTarget.ownerDocument.getSelection();
-            if (!selection || selection.rangeCount === 0) return;
-            const selectedRange = selection.getRangeAt(0);
-            if (
-              !event.currentTarget.contains(selectedRange.startContainer)
-              || !event.currentTarget.contains(selectedRange.endContainer)
-            ) return;
-            const range = currentLogicalRange();
-            if (!range || range.start === range.end) return;
-            const copiedSegments = inlineMediaRangeSegments(segments, range.start, range.end);
-            event.preventDefault();
-            writeInlineMediaClipboard(
-              event.clipboardData,
-              copiedSegments,
-              event.currentTarget.ownerDocument,
-            );
+          onCopy={copyContent}
+          onCut={(event) => {
+            const copied = copyContent(event);
+            if (!copied) return;
+            const image = copied.segments.find((segment): segment is InlineImageSegment => (
+              segment.type === "pending-image" && segment.file.type === "image/png"
+            ));
+            if (image) {
+              const plainText = event.clipboardData.getData("text/plain");
+              const html = event.clipboardData.getData("text/html");
+              void navigator.clipboard.write([new ClipboardItem({
+                "image/png": image.file,
+                "text/html": new Blob([html], { type: "text/html" }),
+                "text/plain": new Blob([plainText], { type: "text/plain" }),
+              })]);
+            }
+            applyRangeReplacement(copied.range.start, copied.range.end, [], false);
           }}
           onKeyUp={(event) => {
             if (event.key !== "Escape") updateCompletionFromSelection();

@@ -20,7 +20,7 @@ This is intentionally a shared-password trust model. The Basic username is only 
 
 ## What stays local
 
-The cloud stores project, issue, comment, relation, workflow, and attachment data. It does not store a device's absolute project or worktree paths.
+The cloud stores project, issue, comment, relation, and attachment data. It does not store a device's absolute project or worktree paths.
 
 Each collaborator runs the **local companion**: a **device-local loopback service** (not a chat persona) for Codex, Git/worktree scanning, installed Skill/MCP discovery, and project path mapping. The companion keeps the cloud URL, actor name, shared password, and device-specific project mappings in `.data/cloud-companion.json` with mode `0600`. Ordinary Taskboard HTTP routes (tasks, comments, attachments) are the shared API; they are not a separate “companion API”.
 

@@ -136,7 +136,6 @@ export function createWranglerCloudAdapters({
           comments: Number(row.comments),
           task_relations: Number(row.task_relations),
           attachments: Number(row.attachments),
-          workflow_workspaces: Number(row.workflow_workspaces),
         },
       ]));
     },
