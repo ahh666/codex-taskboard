@@ -106,7 +106,7 @@ export function FeishuConnectionDialog({
           <button
             className="button secondary"
             type="button"
-            disabled={saving || !connection?.configured}
+            disabled={saving || !connection?.authorized}
             onClick={() => void onRefreshTasklists()}
           >
             {text("刷新任务清单", "Refresh task lists")}

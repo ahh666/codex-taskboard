@@ -250,7 +250,14 @@ export function createFeishuIntegration({ configStore, database, fetch: fetchImp
   }
 
   async function syncWithConfig(config, { archiveMissing = true } = {}) {
-    if (config.tasklists.length === 0) return safeConfig(config, lastSyncedAt);
+    if (config.tasklists.length === 0) {
+      database.syncFeishuTasks([], {
+        archiveMissing,
+        projectName: "飞书任务",
+      });
+      lastSyncedAt = new Date().toISOString();
+      return safeConfig(config, lastSyncedAt);
+    }
     const tasklistNames = new Map();
     for (const tasklist of config.tasklists) {
       const summaries = await listTasklistTasks(config, tasklist.guid);

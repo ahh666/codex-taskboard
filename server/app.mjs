@@ -3120,6 +3120,11 @@ export function createTaskboardServer(options = {}) {
         }
         if (request.method === "PATCH") {
           const patch = resolveInputThreadBinding(parseCommentPatch(await readJson(request)));
+          const currentComment = database.getComment(id);
+          assertFeishuTaskWriteAvailable(
+            currentComment ? database.getTask(currentComment.taskId) : null,
+            "修改评论",
+          );
           const comment = database.updateComment(
             id,
             patch.version,
@@ -3133,6 +3138,11 @@ export function createTaskboardServer(options = {}) {
         }
         if (request.method === "DELETE") {
           const { version } = parseArchive(await readJson(request));
+          const currentComment = database.getComment(id);
+          assertFeishuTaskWriteAvailable(
+            currentComment ? database.getTask(currentComment.taskId) : null,
+            "删除评论",
+          );
           const comment = database.deleteComment(id, version);
           for (const attachment of comment.attachments) {
             try {
@@ -3168,6 +3178,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "POST") {
           const comment = database.getComment(commentId);
           if (!comment) throw new ApiError(404, "COMMENT_NOT_FOUND", `Comment '${commentId}' does not exist`);
+          assertFeishuTaskWriteAvailable(database.getTask(comment.taskId), "添加评论附件");
           const metadata = parseAttachmentHeaders(request);
           const body = await readBody(request, ATTACHMENT_BODY_LIMIT, "Attachment cannot exceed 25 MiB");
           const id = randomUUID();

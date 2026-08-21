@@ -1313,7 +1313,7 @@ export function TaskDetail({
                             {text("已编辑", "Edited")}
                           </span>
                         )}
-                        {editingId !== comment.id && (
+                        {editingId !== comment.id && !isFeishuTask && (
                           <div className="comment-actions" data-comment-menu-root={comment.id}>
                             <button
                               type="button"
@@ -1455,7 +1455,7 @@ export function TaskDetail({
                                   </span>
                                   <span><strong>{attachment.filename}</strong><small>{fileSize(attachment.size)}</small></span>
                                 </a>
-                                {editingId !== comment.id && (
+                                {editingId !== comment.id && !isFeishuTask && (
                                   <button
                                     type="button"
                                     aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
