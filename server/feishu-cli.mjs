@@ -134,9 +134,13 @@ export function createFeishuCli({
 } = {}) {
   if (!executablePath) throw new Error("executablePath is required");
   if (!dataDirectory) throw new Error("dataDirectory is required");
-  const homeDirectory = path.join(dataDirectory, "lark-cli-home");
-  const workDirectory = path.join(homeDirectory, "runtime");
+  const hasBundledApp = Boolean(appId && appSecret);
+  const homeDirectory = hasBundledApp
+    ? path.join(dataDirectory, "lark-cli-home")
+    : textValue(process.env.HOME, process.cwd());
+  const workDirectory = path.join(dataDirectory, "lark-cli-runtime");
   const markerPath = profileMarkerPath(homeDirectory);
+  let activeProfileName = hasBundledApp ? profileName : null;
   let authorization = null;
   let authorizationPromise = null;
   let authorizationProcess = null;
@@ -146,8 +150,10 @@ export function createFeishuCli({
   function commandEnvironment() {
     const environment = {
       ...process.env,
-      HOME: homeDirectory,
-      ...(platform === "win32" ? { USERPROFILE: homeDirectory } : {}),
+      ...(hasBundledApp ? {
+        HOME: homeDirectory,
+        ...(platform === "win32" ? { USERPROFILE: homeDirectory } : {}),
+      } : {}),
     };
     delete environment.CODEX_TASKBOARD_FEISHU_APP_SECRET;
     return environment;
@@ -166,7 +172,7 @@ export function createFeishuCli({
       let stderr = "";
       let settled = false;
       const child = spawn(executablePath, [
-        ...(useProfile ? ["--profile", profileName] : []),
+        ...(useProfile && activeProfileName ? ["--profile", activeProfileName] : []),
         ...args,
       ], {
         cwd,
@@ -232,12 +238,14 @@ export function createFeishuCli({
   }
 
   async function ensureProfile() {
-    if (!appId || !appSecret) {
-      throw new ApiError(
-        409,
-        "FEISHU_APP_CONFIG_REQUIRED",
-        "服务端尚未配置固定飞书应用，请设置 CODEX_TASKBOARD_FEISHU_APP_ID 和 CODEX_TASKBOARD_FEISHU_APP_SECRET",
-      );
+    if (!hasBundledApp) {
+      const profiles = await profileList();
+      const existing = profiles.find((profile) => profile?.active) ?? profiles[0];
+      if (existing?.name) {
+        activeProfileName = existing.name;
+        return;
+      }
+      throw new ApiError(409, "FEISHU_APP_CONFIG_REQUIRED", "请先在飞书 CLI 中完成应用初始化");
     }
     await mkdir(homeDirectory, { recursive: true });
     let marker = null;
@@ -272,7 +280,7 @@ export function createFeishuCli({
   }
 
   async function status() {
-    const appConfigured = Boolean(appId && appSecret);
+    const appConfigured = hasBundledApp;
     if (authorization && Date.parse(authorization.expiresAt) > Date.now()) {
       return {
         configured: appConfigured,
@@ -323,7 +331,9 @@ export function createFeishuCli({
       }
       throw error;
     }
-    const profile = profiles.find((candidate) => candidate?.name === profileName);
+    const profile = hasBundledApp
+      ? profiles.find((candidate) => candidate?.name === profileName)
+      : profiles.find((candidate) => candidate?.active) ?? profiles[0];
     if (!profile) {
       return {
         cliAvailable: true,
@@ -337,8 +347,12 @@ export function createFeishuCli({
         authorizationState: "idle",
       };
     }
+    activeProfileName = profile.name;
     const payload = await runJson(["auth", "status", "--json", "--verify"]);
-    return normalizeStatus(payload, { appId, appConfigured });
+    return normalizeStatus(payload, {
+      appId: profile.appId ?? appId,
+      appConfigured: true,
+    });
   }
 
   async function startAuthorization() {
