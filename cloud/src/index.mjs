@@ -798,6 +798,18 @@ function attachmentFromRow(row) {
   };
 }
 
+function projectReadmeAttachmentFromRow(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    kind: "inline",
+    filename: row.filename,
+    contentType: row.content_type,
+    size: row.size,
+    createdAt: row.created_at,
+  };
+}
+
 async function all(statement) {
   return (await statement.all()).results;
 }
@@ -1157,6 +1169,25 @@ function parseVersionMutation(body) {
   };
 }
 
+function parseRelationOrigin(value) {
+  if (value === undefined) return undefined;
+  if (value !== "manual" && value !== "mention") {
+    throw new ApiError(400, "INVALID_FIELD", "'origin' must be manual or mention");
+  }
+  return value;
+}
+
+function parseRelationMutation(body) {
+  assertPlainObject(body);
+  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding", "origin"]));
+  return {
+    version: parseVersion(body.version),
+    threadId: parseThreadId(body.threadId),
+    threadBinding: parseThreadBinding(body.threadBinding),
+    origin: parseRelationOrigin(body.origin),
+  };
+}
+
 function parseCommentCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding"]));
@@ -1204,6 +1235,34 @@ function parseTaskFilters(searchParams) {
     );
   }
   return { projectId, status, archived };
+}
+
+function parseAfterCursor(searchParams) {
+  for (const key of searchParams.keys()) {
+    if (key !== "after") {
+      throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", `Unknown query parameter: ${key}`);
+    }
+  }
+  const values = searchParams.getAll("after");
+  if (values.length === 0) return null;
+  if (values.length !== 1) {
+    throw new ApiError(400, "INVALID_CURSOR", "'after' must be provided once");
+  }
+  const value = values[0];
+  const revision = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(revision)) {
+    throw new ApiError(400, "INVALID_CURSOR", "'after' must be a non-negative decimal integer");
+  }
+  return { value, revision };
+}
+
+function nextCursor(rows, after) {
+  if (rows.length === 0) return after?.value ?? "0";
+  let revision = rows[0].change_revision;
+  for (const row of rows.slice(1)) {
+    if (row.change_revision > revision) revision = row.change_revision;
+  }
+  return String(revision);
 }
 
 async function listProjects(env) {
@@ -2051,9 +2110,9 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
   statements.push(
     env.DB.prepare(`
       INSERT INTO task_relations (
-        relation_type, source_task_id, target_task_id, created_at
+        relation_type, source_task_id, target_task_id, origin, created_at
       )
-      SELECT ?, ?, ?, ?
+      SELECT ?, ?, ?, ?, ?
       WHERE EXISTS (
         SELECT 1 FROM tasks WHERE id = ? AND version = ?
       )
@@ -2061,6 +2120,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
       endpoints.relationType,
       endpoints.sourceTaskId,
       endpoints.targetTaskId,
+      input.origin ?? "manual",
       timestamp,
       task.id,
       input.version,
@@ -2133,8 +2193,8 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     input.version,
   );
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
-  const exists = await env.DB.prepare(`
-    SELECT 1 AS found
+  const relation = await env.DB.prepare(`
+    SELECT origin
     FROM task_relations
     WHERE relation_type = ? AND source_task_id = ? AND target_task_id = ?
   `).bind(
@@ -2142,8 +2202,14 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     endpoints.sourceTaskId,
     endpoints.targetTaskId,
   ).first();
-  if (!exists) {
+  if (!relation) {
     throw new ApiError(404, "RELATION_NOT_FOUND", "This issue relation does not exist");
+  }
+  if (input.origin && relation.origin !== input.origin) {
+    return {
+      task: await getTask(env, task.id),
+      relatedTask: await getTask(env, relatedTask.id),
+    };
   }
   const timestamp = now();
   const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
@@ -2151,8 +2217,54 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
     : "";
-  const results = await env.DB.batch([
-    env.DB.prepare(`
+  const mentionRemoval = input.origin === "mention"
+    && endpoints.relationType === "related";
+  const taskReference = `](?${new URLSearchParams({
+    project: task.project_id,
+    issue: relatedTask.identifier,
+  })})`;
+  const relatedTaskReference = `](?${new URLSearchParams({
+    project: task.project_id,
+    issue: task.identifier,
+  })})`;
+  const deleteStatement = mentionRemoval
+    ? env.DB.prepare(`
+      DELETE FROM task_relations
+      WHERE relation_type = ?
+        AND source_task_id = ?
+        AND target_task_id = ?
+        AND origin = 'mention'
+        AND EXISTS (
+          SELECT 1 FROM tasks WHERE id = ? AND version = ?
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM tasks
+          WHERE (id = ? AND instr(description, ?) > 0)
+            OR (id = ? AND instr(description, ?) > 0)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM comments
+          WHERE (task_id = ? AND instr(body, ?) > 0)
+            OR (task_id = ? AND instr(body, ?) > 0)
+        )
+    `).bind(
+      endpoints.relationType,
+      endpoints.sourceTaskId,
+      endpoints.targetTaskId,
+      task.id,
+      input.version,
+      task.id,
+      taskReference,
+      relatedTask.id,
+      relatedTaskReference,
+      task.id,
+      taskReference,
+      relatedTask.id,
+      relatedTaskReference,
+    )
+    : env.DB.prepare(`
       DELETE FROM task_relations
       WHERE relation_type = ?
         AND source_task_id = ?
@@ -2166,14 +2278,16 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
       endpoints.targetTaskId,
       task.id,
       input.version,
-    ),
+    );
+  const results = await env.DB.batch([
+    deleteStatement,
     env.DB.prepare(`
       UPDATE tasks
       SET
         ${threadAssignment}
         version = version + 1,
         updated_at = ?
-      WHERE id = ? AND version = ?
+      WHERE id = ? AND version = ?${mentionRemoval ? " AND changes() = 1" : ""}
     `).bind(...(storedBinding ?? []), timestamp, task.id, input.version),
     taskActivityStatement(
       env,
@@ -2190,6 +2304,12 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
   ]);
   if (!changed(results[1])) {
     const latest = await requireTaskRow(env, task.id);
+    if (mentionRemoval && latest.version === input.version) {
+      return {
+        task: await getTask(env, task.id),
+        relatedTask: await getTask(env, relatedTask.id),
+      };
+    }
     throw new ApiError(
       409,
       "VERSION_CONFLICT",
@@ -2315,7 +2435,24 @@ async function listComments(env, taskId) {
     WHERE task_id = ?
     ORDER BY created_at, id
   `).bind(task.id));
-  return Promise.all(rows.map((row) => hydrateComment(env, row)));
+  return {
+    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    nextCursor: nextCursor(rows, null),
+  };
+}
+
+async function listCommentsAfter(env, taskId, after) {
+  const task = await requireTaskRow(env, taskId);
+  const rows = await all(env.DB.prepare(`
+    SELECT * FROM comments
+    WHERE task_id = ?
+      AND change_revision > ?
+    ORDER BY change_revision
+  `).bind(task.id, after.revision));
+  return {
+    comments: await Promise.all(rows.map((row) => hydrateComment(env, row))),
+    nextCursor: nextCursor(rows, after),
+  };
 }
 
 async function createComment(env, taskId, input, actor) {
@@ -2326,8 +2463,9 @@ async function createComment(env, taskId, input, actor) {
     INSERT INTO comments (
       id, task_id, body, thread_id, thread_codex_project_id, thread_codex_project_kind,
       thread_codex_host_id, thread_workspace_path, author_type, author_id, author_name,
-      author_avatar_url, version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      author_avatar_url, version, created_at, updated_at, change_revision
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?,
+      (SELECT revision + 1 FROM global_revision WHERE singleton = 1))
   `).bind(
     id,
     task.id,
@@ -2377,7 +2515,8 @@ async function updateComment(env, id, input) {
       body = ?,
       ${threadAssignment}
       version = version + 1,
-      updated_at = ?
+      updated_at = ?,
+      change_revision = (SELECT revision + 1 FROM global_revision WHERE singleton = 1)
     WHERE id = ? AND version = ?
   `).bind(
     input.body,
@@ -2418,20 +2557,44 @@ async function deleteComment(env, id, expectedVersion) {
   await Promise.all(attachments.map((attachment) => env.ATTACHMENTS.delete(attachment.id)));
 }
 
-async function listTaskAttachments(env, taskId) {
+async function listTaskAttachments(env, taskId, after) {
   const task = await requireTaskRow(env, taskId);
-  return (
-    await all(env.DB.prepare(`
+  const rows = after
+    ? await all(env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE task_id = ? AND comment_id IS NULL
+        AND change_revision > ?
+      ORDER BY change_revision
+    `).bind(task.id, after.revision))
+    : await all(env.DB.prepare(`
       SELECT * FROM attachments
       WHERE task_id = ? AND comment_id IS NULL
       ORDER BY created_at, id
-    `).bind(task.id))
-  ).map(attachmentFromRow);
+    `).bind(task.id));
+  return {
+    attachments: rows.map(attachmentFromRow),
+    nextCursor: nextCursor(rows, after),
+  };
 }
 
-async function listCommentAttachments(env, commentId) {
+async function listCommentAttachments(env, commentId, after) {
   await requireCommentRow(env, commentId);
-  return attachmentsForComment(env, commentId);
+  const rows = after
+    ? await all(env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE comment_id = ?
+        AND change_revision > ?
+      ORDER BY change_revision
+    `).bind(commentId, after.revision))
+    : await all(env.DB.prepare(`
+      SELECT * FROM attachments
+      WHERE comment_id = ?
+      ORDER BY created_at, id
+    `).bind(commentId));
+  return {
+    attachments: rows.map(attachmentFromRow),
+    nextCursor: nextCursor(rows, after),
+  };
 }
 
 async function uploadAttachment(env, ownerType, ownerId, request) {
@@ -2453,8 +2616,9 @@ async function uploadAttachment(env, ownerType, ownerId, request) {
   try {
     await env.DB.prepare(`
       INSERT INTO attachments (
-        id, task_id, comment_id, kind, filename, content_type, size, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, task_id, comment_id, kind, filename, content_type, size, created_at, change_revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+        (SELECT revision + 1 FROM global_revision WHERE singleton = 1))
     `).bind(
       id,
       taskId,
@@ -2473,17 +2637,63 @@ async function uploadAttachment(env, ownerType, ownerId, request) {
   return attachmentFromRow(row);
 }
 
+async function uploadProjectReadmeAttachment(env, projectId, request) {
+  await requireProject(env, projectId);
+  const metadata = parseAttachmentHeaders(request);
+  if (metadata.kind !== "inline") {
+    throw new ApiError(
+      400,
+      "INVALID_ATTACHMENT_KIND",
+      "Project README attachments must be inline",
+    );
+  }
+  const body = await readAttachment(request);
+  const id = uuid();
+  await env.ATTACHMENTS.put(id, body, {
+    httpMetadata: { contentType: metadata.contentType },
+  });
+  try {
+    await env.DB.prepare(`
+      INSERT INTO project_readme_attachments (
+        id, project_id, filename, content_type, size, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(
+      id,
+      projectId,
+      metadata.filename,
+      metadata.contentType,
+      body.byteLength,
+      now(),
+    ).run();
+  } catch (error) {
+    await env.ATTACHMENTS.delete(id);
+    throw error;
+  }
+  const row = await env.DB.prepare(
+    "SELECT * FROM project_readme_attachments WHERE id = ?",
+  ).bind(id).first();
+  return projectReadmeAttachmentFromRow(row);
+}
+
 async function requireAttachment(env, id) {
   const row = await env.DB.prepare("SELECT * FROM attachments WHERE id = ?").bind(id).first();
-  if (!row) {
-    throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${id}' does not exist`);
-  }
-  return attachmentFromRow(row);
+  if (row) return attachmentFromRow(row);
+  const projectReadmeRow = await env.DB.prepare(
+    "SELECT * FROM project_readme_attachments WHERE id = ?",
+  ).bind(id).first();
+  if (projectReadmeRow) return projectReadmeAttachmentFromRow(projectReadmeRow);
+  throw new ApiError(404, "ATTACHMENT_NOT_FOUND", `Attachment '${id}' does not exist`);
 }
 
 async function deleteAttachment(env, id) {
   const attachment = await requireAttachment(env, id);
-  await env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(attachment.id).run();
+  if (attachment.projectId) {
+    await env.DB.prepare(
+      "DELETE FROM project_readme_attachments WHERE id = ?",
+    ).bind(attachment.id).run();
+  } else {
+    await env.DB.prepare("DELETE FROM attachments WHERE id = ?").bind(attachment.id).run();
+  }
   await env.ATTACHMENTS.delete(attachment.id);
   return attachment;
 }
@@ -2654,6 +2864,20 @@ async function routeApi(request, env, actor, url) {
     return json(200, { project });
   }
 
+  const projectReadmeAttachmentsMatch = pathname.match(
+    /^\/api\/projects\/([^/]+)\/readme\/attachments$/,
+  );
+  if (projectReadmeAttachmentsMatch) {
+    requireNoQuery(url, "Project README attachment routes");
+    const projectId = validateProjectId(
+      decodePathPart(projectReadmeAttachmentsMatch[1], "Project id"),
+    );
+    if (request.method !== "POST") methodNotAllowed(["POST"]);
+    return json(201, {
+      attachment: await uploadProjectReadmeAttachment(env, projectId, request),
+    });
+  }
+
   const projectReadmeMatch = pathname.match(
     /^\/api\/projects\/([^/]+)\/readme$/,
   );
@@ -2712,7 +2936,7 @@ async function routeApi(request, env, actor, url) {
     const taskId = decodePathPart(relationMatch[1], "Task id");
     const type = decodePathPart(relationMatch[2], "Relation type");
     const relatedTaskId = decodePathPart(relationMatch[3], "Related task id");
-    const input = parseVersionMutation(await readJson(request));
+    const input = parseRelationMutation(await readJson(request));
     if (request.method === "POST") {
       return json(200, await addRelation(env, taskId, type, relatedTaskId, input, actor));
     }
@@ -2734,11 +2958,14 @@ async function routeApi(request, env, actor, url) {
 
   const taskCommentsMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/comments$/);
   if (taskCommentsMatch) {
-    requireNoQuery(url, "Comment routes");
     const taskId = decodePathPart(taskCommentsMatch[1], "Task id");
     if (request.method === "GET") {
-      return json(200, { comments: await listComments(env, taskId) });
+      const after = parseAfterCursor(url.searchParams);
+      return json(200, after
+        ? await listCommentsAfter(env, taskId, after)
+        : await listComments(env, taskId));
     }
+    requireNoQuery(url, "Comment routes");
     if (request.method === "POST") {
       return json(201, {
         comment: await createComment(
@@ -2756,13 +2983,14 @@ async function routeApi(request, env, actor, url) {
     /^\/api\/comments\/([^/]+)\/attachments$/,
   );
   if (commentAttachmentsMatch) {
-    requireNoQuery(url, "Attachment routes");
     const commentId = decodePathPart(commentAttachmentsMatch[1], "Comment id");
     if (request.method === "GET") {
-      return json(200, {
-        attachments: await listCommentAttachments(env, commentId),
-      });
+      return json(
+        200,
+        await listCommentAttachments(env, commentId, parseAfterCursor(url.searchParams)),
+      );
     }
+    requireNoQuery(url, "Attachment routes");
     if (request.method === "POST") {
       return json(201, {
         attachment: await uploadAttachment(env, "comment", commentId, request),
@@ -2796,13 +3024,11 @@ async function routeApi(request, env, actor, url) {
     /^\/api\/tasks\/([^/]+)\/attachments$/,
   );
   if (taskAttachmentsMatch) {
-    requireNoQuery(url, "Attachment routes");
     const taskId = decodePathPart(taskAttachmentsMatch[1], "Task id");
     if (request.method === "GET") {
-      return json(200, {
-        attachments: await listTaskAttachments(env, taskId),
-      });
+      return json(200, await listTaskAttachments(env, taskId, parseAfterCursor(url.searchParams)));
     }
+    requireNoQuery(url, "Attachment routes");
     if (request.method === "POST") {
       return json(201, {
         attachment: await uploadAttachment(env, "task", taskId, request),

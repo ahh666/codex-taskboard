@@ -149,7 +149,7 @@ export function TaskFilterMenu({ tasks, search, labels, filters, onChange }: Tas
     keywords: status,
     count: countFor("statuses", (task) => task.status === status),
     selected: filters.statuses.includes(status),
-    icon: <span className={`filter-status-icon status-${status}`}><StatusIcon status={status} /></span>,
+    icon: <span className="filter-status-icon"><StatusIcon status={status} color="currentColor" /></span>,
     toggle: () => toggleStatus(status),
   })), [filters, language, search, tasks, text]);
 

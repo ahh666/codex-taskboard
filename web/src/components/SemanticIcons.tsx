@@ -1,5 +1,4 @@
 import type { CSSProperties, HTMLAttributes, ReactNode, SVGProps } from "react";
-import calendarSource from "../assets/figma-taskboard/calendar.svg";
 import conversationSource from "../assets/figma-taskboard/conversation.svg";
 import prioritySource from "../assets/figma-taskboard/priority.svg";
 import priorityHighSource from "../assets/figma-taskboard/priority-high.svg";
@@ -207,10 +206,6 @@ export function BlockingRelationIcon({ type, ...props }: Omit<MaskIconProps, "so
   type: "blocked_by" | "blocks";
 }) {
   return <MaskIcon {...props} source={type === "blocked_by" ? relationBlockedBySource : relationBlocksSource} />;
-}
-
-export function StartDateIcon(props: Omit<MaskIconProps, "source">) {
-  return <MaskIcon {...props} source={calendarSource} />;
 }
 
 export function DueDateIcon(props: BasicIconProps) {

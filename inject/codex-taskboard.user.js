@@ -25,7 +25,6 @@
   const REATTACH_DELAY_MS = 160;
   const FRAME_READY_TIMEOUT_MS = 12_000;
   const HOST_REQUEST_TIMEOUT_MS = 12_000;
-  const TASK_CONVERSATION_REQUEST_TIMEOUT_MS = 75_000;
   const HOST_HEARTBEAT_MAX_AGE_MS = 8_000;
   const MACOS_TITLEBAR_SAFE_LEFT = 80;
   const FRAME_REFRESH_PARAM = "__codex_taskboard_refresh";
@@ -1071,28 +1070,15 @@
         ));
       }
 
-      const previousComposerRoot = Array.from(document.querySelectorAll(
-        '[data-codex-composer-root][data-composer-placement="thread"]',
-      )).find((candidate) => candidate.getClientRects().length > 0);
-      const previousThreadId = normalizeThreadId(
-        previousComposerRoot
-          ?.querySelector("[data-above-composer-conversation-id]")
-          ?.getAttribute("data-above-composer-conversation-id"),
-      );
-      let codexHostId = "local";
-      let targetRoot;
-      if (projectless) {
-        targetRoot = "";
-      } else if (codexProjectKind === "remote") {
-        codexHostId = typeof payload?.codexHostId === "string"
+      if (!projectless && codexProjectKind === "remote") {
+        const codexHostId = typeof payload?.codexHostId === "string"
           ? payload.codexHostId.trim()
           : "";
         const codexProjectWorkspacePath = typeof payload?.codexProjectWorkspacePath === "string"
           ? payload.codexProjectWorkspacePath.trim()
           : "";
         await waitForRemoteProject(requestedProjectId, codexHostId, codexProjectWorkspacePath);
-        targetRoot = codexProjectWorkspacePath;
-      } else {
+      } else if (!projectless) {
         const target = await resolveNativeProject(requestedProjectId, workspacePath);
         if (!target) {
           throw new Error(hostText(
@@ -1100,7 +1086,7 @@
             "The target project or worktree is not mapped in Codex",
           ));
         }
-        targetRoot = target.targetRoot;
+        const { targetRoot } = target;
         bridge.sendMessageFromView({
           type: "electron-add-new-workspace-root-option",
           root: targetRoot,
@@ -1119,41 +1105,8 @@
           ...(projectless ? { project: null } : {}),
         },
       });
-      const started = await requestHostTaskConversationStart({
-        taskId,
-        previousThreadId,
-        codexHostId,
-        projectless,
-        targetRoot,
-        instruction,
-        title,
-      });
-      const startedThreadId = normalizeThreadId(started.threadId);
-      const visibleThreadComposer = Array.from(document.querySelectorAll(
-        '[data-codex-composer-root][data-composer-placement="thread"]',
-      )).find((candidate) => candidate.getClientRects().length > 0);
-      const visibleThreadId = normalizeThreadId(
-        visibleThreadComposer
-          ?.querySelector("[data-above-composer-conversation-id]")
-          ?.getAttribute("data-above-composer-conversation-id"),
-      );
-      if (visibleThreadId !== startedThreadId) {
-        await dispatchHostMessage({
-          type: "navigate-to-route",
-          path: routeForThread(startedThreadId),
-        });
-      }
-      lastNativeThreadId = startedThreadId;
-      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId, threadId: started.threadId } });
+      postToFrame({ type: "taskboard:thread-prepared", payload: { taskId } });
     } catch (error) {
-      const createdThreadId = normalizeThreadId(error?.threadId);
-      if (createdThreadId && codexProjectKind !== "remote") {
-        await dispatchHostMessage({
-          type: "navigate-to-route",
-          path: routeForThread(createdThreadId),
-        });
-        lastNativeThreadId = createdThreadId;
-      }
       postToFrame({
         type: "taskboard:thread-create-error",
         payload: {
@@ -1161,8 +1114,6 @@
           error: error instanceof Error
             ? error.message
             : hostText("无法创建 Codex 对话", "Could not create the Codex conversation"),
-          ...(typeof error?.threadId === "string" ? { threadId: error.threadId } : {}),
-          ...(error?.uncertain === true ? { uncertain: true } : {}),
         },
       });
     } finally {
@@ -1583,26 +1534,6 @@
 
   function requestHostLoadFrame({ frameName, frameCapability: capability }) {
     return requestHost("load-frame", { frameName, frameCapability: capability });
-  }
-
-  function requestHostTaskConversationStart({
-    taskId,
-    previousThreadId,
-    codexHostId,
-    projectless,
-    targetRoot,
-    instruction,
-    title,
-  }) {
-    return requestHost("start-task-conversation", {
-      taskId,
-      previousThreadId,
-      codexHostId,
-      projectless,
-      targetRoot,
-      instruction,
-      title,
-    }, TASK_CONVERSATION_REQUEST_TIMEOUT_MS);
   }
 
   function frameMatchesTaskboardUrl(taskboardUrl) {

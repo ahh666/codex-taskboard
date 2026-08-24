@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { attachmentContentUrl, resolvePersistedAttachmentUrl } from "../api";
+import { resolvePersistedAttachmentUrl } from "../api";
 import {
   TASK_PRIORITIES,
   type ActorIdentity,
@@ -109,8 +109,7 @@ function firstTaskImage(task: Task) {
     /!\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+["'][^)]*["'])?\)/,
   );
   const source = markdownImage?.[1]
-    ?? markdownImage?.[2]
-    ?? (task.previewImage ? attachmentContentUrl(task.previewImage) : null);
+    ?? markdownImage?.[2];
   return source ? resolvePersistedAttachmentUrl(source) : null;
 }
 

@@ -29,8 +29,8 @@
   --success: #43bc58;
   --priority-urgent: #ff7236;
   --priority-high: #ff7236;
-  --priority-medium: var(--warning);
-  --priority-low: var(--accent);
+  --priority-medium: var(--text-tertiary);
+  --priority-low: var(--text-tertiary);
   --priority-none: var(--text-tertiary);
   --status-backlog: #9e9ea1;
   --status-todo: #9e9ea1;
@@ -243,7 +243,7 @@ kbd {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   height: 100vh;
   overflow: hidden;
@@ -1709,11 +1709,6 @@ kbd {
   color: var(--text-tertiary);
 }
 
-.filter-status-icon.status-in_progress { color: var(--status-progress); }
-.filter-status-icon.status-in_review { color: var(--status-review); }
-.filter-status-icon.status-blocked { color: var(--status-blocked); }
-.filter-status-icon.status-done { color: var(--status-done); }
-.filter-status-icon.status-canceled { color: var(--status-canceled); }
 .filter-status-icon svg { width: 15px; height: 15px; }
 
 .filter-label-glyph {
@@ -4402,7 +4397,7 @@ kbd {
   place-items: center;
   width: 16px;
   height: 16px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   grid-column: 2;
   grid-row: 1;
   justify-self: start;
@@ -4467,6 +4462,13 @@ kbd {
 
 .detail-date-property-row input::-webkit-calendar-picker-indicator {
   display: none;
+}
+
+.detail-date-property-row input:focus::-webkit-datetime-edit-year-field,
+.detail-date-property-row input:focus::-webkit-datetime-edit-month-field,
+.detail-date-property-row input:focus::-webkit-datetime-edit-day-field {
+  background-color: transparent;
+  color: inherit;
 }
 
 .detail-property-picker {
@@ -6843,12 +6845,12 @@ kbd {
 
 .ai-chat-thinking-detail-trigger {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   width: 100%;
   min-width: 0;
   min-height: 26px;
   gap: 6px;
-  padding: 4px 12px;
+  padding: 0 12px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -7920,41 +7922,6 @@ kbd {
   .attachment-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-@media (max-width: 840px) {
-  .app-shell:not(.embedded) {
-    display: block;
-  }
-
-  .app-nav {
-    position: sticky;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    width: 100%;
-    height: 46px;
-    padding: 7px 10px;
-    overflow: hidden;
-    border-right: 0;
-    border-bottom: var(--border-hairline) solid var(--border);
-  }
-
-  .app-shell:not(.embedded) .workspace {
-    height: calc(100vh - 46px);
-  }
-
-  .primary-nav,
-  .project-nav,
-  .connection,
-  .nav-footer {
-    display: none;
-  }
-
-  .nav-spacer {
-    display: block;
-  }
-
 }
 
 @media (max-width: 620px) {
