@@ -74,13 +74,18 @@ function normalizeTask(task, tasklistNames, index) {
   };
 }
 
-function safeConfig(config, lastSyncedAt = null) {
+function safeConfig(config, lastSyncedAt = null, defaultCredentials = null) {
   const authorized = Boolean(config?.accessToken || config?.refreshToken);
+  const authorizationReady = Boolean(
+    (config?.appId && config?.appSecret)
+      || (defaultCredentials?.appId && defaultCredentials?.appSecret),
+  );
   return config
     ? {
       configured: true,
       authorized,
       appId: config.appId,
+      authorizationReady,
       scopes: config.scopes ? config.scopes.split(" ").filter(Boolean) : [],
       tasklists: config.tasklists,
       projectId: FEISHU_PROJECT_ID,
@@ -89,7 +94,8 @@ function safeConfig(config, lastSyncedAt = null) {
     : {
       configured: false,
       authorized: false,
-      appId: null,
+      appId: defaultCredentials?.appId ?? null,
+      authorizationReady,
       scopes: [],
       tasklists: [],
       projectId: FEISHU_PROJECT_ID,
@@ -105,7 +111,12 @@ function expiresAt(seconds) {
   return new Date(Date.now() + value * 1_000).toISOString();
 }
 
-export function createFeishuIntegration({ configStore, database, fetch: fetchImplementation = globalThis.fetch }) {
+export function createFeishuIntegration({
+  configStore,
+  database,
+  defaultCredentials = null,
+  fetch: fetchImplementation = globalThis.fetch,
+}) {
   let lastSyncedAt = null;
   let pendingSync = null;
   let pendingAuthorization = null;
@@ -256,7 +267,7 @@ export function createFeishuIntegration({ configStore, database, fetch: fetchImp
         projectName: "飞书任务",
       });
       lastSyncedAt = new Date().toISOString();
-      return safeConfig(config, lastSyncedAt);
+      return safeConfig(config, lastSyncedAt, defaultCredentials);
     }
     const tasklistNames = new Map();
     for (const tasklist of config.tasklists) {
@@ -281,16 +292,29 @@ export function createFeishuIntegration({ configStore, database, fetch: fetchImp
       projectName: "飞书任务",
     });
     lastSyncedAt = new Date().toISOString();
-    return safeConfig(config, lastSyncedAt);
+    return safeConfig(config, lastSyncedAt, defaultCredentials);
   }
 
   return {
     async status() {
-      return safeConfig(await configStore.read(), lastSyncedAt);
+      return safeConfig(await configStore.read(), lastSyncedAt, defaultCredentials);
     },
-    async startAuthorization({ appId, appSecret, redirectUri }) {
+    async startAuthorization({ redirectUri }) {
       const current = await configStore.read();
-      const candidate = configStore.validateCredentials({ appId, appSecret });
+      const configuredCredentials = current?.appId && current?.appSecret
+        ? { appId: current.appId, appSecret: current.appSecret }
+        : null;
+      const credentials = defaultCredentials?.appId && defaultCredentials?.appSecret
+        ? defaultCredentials
+        : configuredCredentials;
+      if (!credentials) {
+        throw new ApiError(
+          409,
+          "FEISHU_APP_CONFIG_REQUIRED",
+          "服务端尚未配置固定飞书应用，请设置 CODEX_TASKBOARD_FEISHU_APP_ID 和 CODEX_TASKBOARD_FEISHU_APP_SECRET",
+        );
+      }
+      const candidate = configStore.validateCredentials(credentials);
       const config = await configStore.save({
         ...candidate,
         tasklists: current?.appId === candidate.appId ? current.tasklists : [],
@@ -340,7 +364,7 @@ export function createFeishuIntegration({ configStore, database, fetch: fetchImp
         refreshTokenExpiresAt: expiresAt(token.refresh_token_expires_in),
         scopes: typeof token.scope === "string" ? token.scope : "",
       });
-      return safeConfig(savedConfig, lastSyncedAt);
+      return safeConfig(savedConfig, lastSyncedAt, defaultCredentials);
     },
     async listTasklists() {
       return listTasklistsWithConfig(await activeConfig());
@@ -358,9 +382,11 @@ export function createFeishuIntegration({ configStore, database, fetch: fetchImp
     },
     async sync({ force = false } = {}) {
       const config = await configStore.read();
-      if (!config?.accessToken && !config?.refreshToken) return safeConfig(config);
+      if (!config?.accessToken && !config?.refreshToken) {
+        return safeConfig(config, null, defaultCredentials);
+      }
       if (!force && lastSyncedAt && Date.now() - Date.parse(lastSyncedAt) < SYNC_INTERVAL_MS) {
-        return safeConfig(config, lastSyncedAt);
+        return safeConfig(config, lastSyncedAt, defaultCredentials);
       }
       if (pendingSync) return pendingSync;
       pendingSync = activeConfig()

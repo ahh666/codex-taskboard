@@ -11,7 +11,7 @@
 ## 真实操作路径
 
 1. 用户从项目菜单打开“连接飞书任务”。
-2. 用户填写飞书自建应用的 App ID 和 App Secret。界面显示固定的本地 OAuth 回调地址，用户在飞书开发者后台将该地址登记为重定向地址。
+2. Taskboard 服务端从 `CODEX_TASKBOARD_FEISHU_APP_ID` 和 `CODEX_TASKBOARD_FEISHU_APP_SECRET` 读取固定的飞书自建应用身份；用户只需在界面确认回调地址，并在飞书开发者后台登记该地址。
 3. 用户点击授权，Taskboard 在浏览器打开飞书授权页，请求 `task:task:read`、`task:tasklist:read`、`task:task:write` 和 `offline_access`。
 4. 本地回调校验 OAuth `state` 与 PKCE verifier，换取并保存 user/refresh token；随后读取当前用户有权限访问的任务清单。
 5. 用户勾选要同步的团队清单并保存。Taskboard 分页读取每一个所选清单的任务摘要，再读取每项完整任务详情，投影为“飞书任务”项目下的外部议题。
@@ -21,7 +21,7 @@
 
 新增 `server/feishu-config.mjs` 与 `server/feishu-integration.mjs`，职责对应已有 Jira 配置和集成模块，但不复用 Jira Basic Auth 或状态机。
 
-- `feishu-config.mjs`：验证并原子保存 App ID、App Secret、refresh token、token 到期时间和已选清单。配置文件权限固定为 `0600`，响应 API 永不返回 App Secret、access token 或 refresh token。
+- `feishu-config.mjs`：验证并原子保存 App ID、App Secret、refresh token、token 到期时间和已选清单。配置文件权限固定为 `0600`，响应 API 永不返回 App Secret、access token 或 refresh token。固定应用身份由服务端环境配置提供，已存在的本地配置仍可兼容读取。
 - `feishu-integration.mjs`：构造 OAuth 授权地址；保存一次性 `state` 和 PKCE verifier；处理回调并换取/刷新 token；列取可访问清单；对选中清单分页同步任务；将允许的本地变更回写飞书。
 - `server/app.mjs`：挂载连接状态、授权开始、OAuth 回调、清单列取、选区保存和立即同步路由；在查询飞书项目任务时触发已有的一分钟同步节流；把飞书外部任务的 PATCH/move 分发给飞书适配器。
 - `server/database.mjs`：增加飞书专用项目常量与飞书任务投影操作。飞书任务用稳定 task GUID 作为外部 ID，来源标记为 `feishu`，清单名称作为只读标签，用于辨识团队来源。
@@ -34,7 +34,7 @@
 本地路由仅在本机 companion 可用时提供：
 
 - `GET /api/local/feishu-connection`：返回脱敏连接状态、授权用户展示名、已选清单和最近同步时间。
-- `POST /api/local/feishu-connection/authorize`：接收 App ID/App Secret，创建 OAuth state 与 PKCE challenge，返回授权 URL。
+- `POST /api/local/feishu-connection/authorize`：使用服务端固定的飞书应用身份，创建 OAuth state 与 PKCE challenge，返回授权 URL。
 - `GET /api/local/feishu-connection/callback`：校验回调并完成 token 交换，向浏览器显示成功或失败结果。
 - `GET /api/local/feishu-connection/tasklists`：返回当前用户有读取权限的任务清单。
 - `PUT /api/local/feishu-connection`：保存已选清单 GUID 并立即同步。

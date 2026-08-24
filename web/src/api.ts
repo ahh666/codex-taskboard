@@ -188,6 +188,7 @@ function emptyFeishuConnection(): FeishuConnection {
     configured: false,
     authorized: false,
     appId: null,
+    authorizationReady: false,
     scopes: [],
     tasklists: [],
     projectId: "feishu-tasks",
@@ -208,13 +209,10 @@ export async function getFeishuConnection(signal?: AbortSignal): Promise<FeishuC
   }
 }
 
-export async function startFeishuAuthorization(input: {
-  appId: string;
-  appSecret: string;
-}): Promise<{ authorizationUrl: string; redirectUri: string }> {
+export async function startFeishuAuthorization(): Promise<{ authorizationUrl: string; redirectUri: string }> {
   const data = await request<{ authorization: { authorizationUrl: string; redirectUri: string } }>(
     "/api/local/feishu-connection/authorize",
-    { method: "POST", body: JSON.stringify(input) },
+    { method: "POST", body: JSON.stringify({}) },
   );
   return data.authorization;
 }

@@ -4683,6 +4683,13 @@ kbd {
   margin-top: 16px;
 }
 
+.feishu-connection-help {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .feishu-tasklists {
   display: grid;
   gap: 8px;

@@ -3126,13 +3126,13 @@ export function App() {
     setFeishuDialogOpen(true);
   }
 
-  async function authorizeFeishu(input: { appId: string; appSecret: string }) {
+  async function authorizeFeishu() {
     if (feishuSaving) return;
     const authorizationWindow = window.open("", "feishu-taskboard-oauth", "popup,width=560,height=720");
     setFeishuSaving(true);
     setFeishuError(null);
     try {
-      const authorization = await startFeishuAuthorization(input);
+      const authorization = await startFeishuAuthorization();
       if (authorizationWindow) {
         authorizationWindow.location.href = authorization.authorizationUrl;
         authorizationWindow.focus();

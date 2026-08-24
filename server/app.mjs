@@ -1573,6 +1573,12 @@ export function resolveServerOptions(options = {}) {
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     feishuConfigPath: options.feishuConfigPath ?? path.join(dataDirectory, "feishu-connection.json"),
+    feishuAppId: String(
+      options.feishuAppId ?? process.env.CODEX_TASKBOARD_FEISHU_APP_ID ?? "",
+    ).trim(),
+    feishuAppSecret: String(
+      options.feishuAppSecret ?? process.env.CODEX_TASKBOARD_FEISHU_APP_SECRET ?? "",
+    ).trim(),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
@@ -1663,6 +1669,9 @@ export function createTaskboardServer(options = {}) {
   const feishu = createFeishuIntegration({
     configStore: feishuConfig,
     database,
+    defaultCredentials: resolved.feishuAppId && resolved.feishuAppSecret
+      ? { appId: resolved.feishuAppId, appSecret: resolved.feishuAppSecret }
+      : null,
     fetch: options.feishuFetch ?? globalThis.fetch,
   });
   let hostRuntime = null;
@@ -2263,9 +2272,7 @@ export function createTaskboardServer(options = {}) {
         }
         const body = await readJson(request);
         assertPlainObject(body);
-        assertAllowedKeys(body, new Set(["appId", "appSecret"]));
-        const appId = stringField(body.appId, "appId", { required: true, maxLength: 256 });
-        const appSecret = stringField(body.appSecret, "appSecret", { required: true, maxLength: 4_096 });
+        assertAllowedKeys(body, new Set());
         const callback = new URL(`http://${request.headers.host ?? "127.0.0.1"}`);
         if (callback.hostname === "0.0.0.0" || callback.hostname === "::") {
           callback.hostname = "127.0.0.1";
@@ -2275,8 +2282,6 @@ export function createTaskboardServer(options = {}) {
         try {
           return sendJson(response, 200, {
             authorization: await feishu.startAuthorization({
-              appId,
-              appSecret,
               redirectUri: callback.toString(),
             }),
           });

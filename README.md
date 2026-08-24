@@ -34,7 +34,7 @@ The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the loca
 
 Taskboard can sync the Feishu task lists that the authorized user can read, including teammate-owned tasks in shared lists. This is not an integration with Feishu Project work items.
 
-Choose “Connect Feishu tasks” from the project menu and provide a Feishu custom app's App ID and App Secret. Register the full callback address displayed by the dialog in the Feishu developer console, then complete browser authorization. An administrator must approve these user scopes for the custom app:
+Configure the fixed Feishu custom app in the local service environment before starting Taskboard: `CODEX_TASKBOARD_FEISHU_APP_ID` and `CODEX_TASKBOARD_FEISHU_APP_SECRET`. Then choose “Connect Feishu tasks” from the project menu, register the full callback address displayed by the dialog in the Feishu developer console, and click “Sign in and authorize Feishu” to complete browser authorization. The app secret is read only by the local service; the frontend never asks for or stores it. An administrator must approve these user scopes for the custom app:
 
 - `task:task:read`
 - `task:tasklist:read`

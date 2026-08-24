@@ -9,7 +9,7 @@ interface FeishuConnectionDialogProps {
   saving: boolean;
   error: string | null;
   onClose: () => void;
-  onAuthorize: (input: { appId: string; appSecret: string }) => Promise<void>;
+  onAuthorize: () => Promise<void>;
   onRefreshTasklists: () => Promise<void>;
   onSaveTasklists: (guids: string[]) => Promise<void>;
 }
@@ -25,8 +25,6 @@ export function FeishuConnectionDialog({
   onSaveTasklists,
 }: FeishuConnectionDialogProps) {
   const { text } = useTaskboardI18n();
-  const [appId, setAppId] = useState(connection?.appId ?? "");
-  const [appSecret, setAppSecret] = useState("");
   const [selectedGuids, setSelectedGuids] = useState<Set<string>>(new Set(
     connection?.tasklists.map((tasklist) => tasklist.guid) ?? [],
   ));
@@ -36,8 +34,6 @@ export function FeishuConnectionDialog({
   ).toString(), []);
 
   useEffect(() => {
-    setAppId(connection?.appId ?? "");
-    setAppSecret("");
     setSelectedGuids(new Set(connection?.tasklists.map((tasklist) => tasklist.guid) ?? []));
   }, [connection]);
 
@@ -70,38 +66,21 @@ export function FeishuConnectionDialog({
           <span>{text("回调地址", "Redirect URI")}</span>
           <input readOnly value={callbackUri} onFocus={(event) => event.currentTarget.select()} />
         </label>
-        <label>
-          <span>{text("App ID", "App ID")}</span>
-          <input
-            required={!connection?.authorized}
-            autoFocus
-            autoComplete="off"
-            maxLength={256}
-            placeholder="cli_xxx"
-            value={appId}
-            onChange={(event) => setAppId(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>{text("App Secret", "App Secret")}</span>
-          <input
-            required={!connection?.authorized}
-            type="password"
-            autoComplete="off"
-            maxLength={4096}
-            placeholder={connection?.authorized ? text("重新授权时填写", "Required to reauthorize") : ""}
-            value={appSecret}
-            onChange={(event) => setAppSecret(event.target.value)}
-          />
-        </label>
+        <p className="feishu-connection-help">
+          {connection?.authorizationReady
+            ? text("使用已配置的飞书应用登录并授权，前端不会保存应用密钥。", "Sign in and authorize with the configured Feishu app. The app secret stays on the local service.")
+            : text("当前未配置固定飞书应用，请管理员设置 CODEX_TASKBOARD_FEISHU_APP_ID 和 CODEX_TASKBOARD_FEISHU_APP_SECRET。", "A fixed Feishu app is not configured. Ask an administrator to set CODEX_TASKBOARD_FEISHU_APP_ID and CODEX_TASKBOARD_FEISHU_APP_SECRET.")}
+        </p>
         <div className="feishu-connection-actions">
           <button
             className="button secondary"
             type="button"
-            disabled={saving || !appId.trim() || !appSecret}
-            onClick={() => void onAuthorize({ appId: appId.trim(), appSecret })}
+            disabled={saving || !connection?.authorizationReady}
+            onClick={() => void onAuthorize()}
           >
-            {text("授权飞书", "Authorize Feishu")}
+            {connection?.authorized
+              ? text("重新登录并授权", "Sign in and reauthorize")
+              : text("登录并授权飞书", "Sign in and authorize Feishu")}
           </button>
           <button
             className="button secondary"

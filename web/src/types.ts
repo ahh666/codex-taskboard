@@ -458,6 +458,7 @@ export interface FeishuTasklist {
 export interface FeishuConnection {
   configured: boolean;
   authorized: boolean;
+  authorizationReady: boolean;
   appId: string | null;
   scopes: string[];
   tasklists: FeishuTasklist[];
