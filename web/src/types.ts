@@ -457,13 +457,20 @@ export interface FeishuTasklist {
 
 export interface FeishuConnection {
   configured: boolean;
+  cliAvailable: boolean;
   authorized: boolean;
   authorizationReady: boolean;
+  authorizationState: "idle" | "pending" | "authorized" | "failed";
+  authorizationUrl: string | null;
+  authorizationQrCode: string | null;
+  authorizationExpiresAt: string | null;
   appId: string | null;
+  displayName: string | null;
   scopes: string[];
   tasklists: FeishuTasklist[];
   projectId: string;
   lastSyncedAt: string | null;
+  error: string | null;
 }
 
 export interface Comment {

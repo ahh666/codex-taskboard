@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
@@ -30,6 +31,7 @@ import {
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
 import { createFeishuConfigStore } from "./feishu-config.mjs";
+import { createFeishuCli, resolveFeishuCliPath } from "./feishu-cli.mjs";
 import { createFeishuIntegration } from "./feishu-integration.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
@@ -115,6 +117,16 @@ function assertFeishuTaskWriteAvailable(task, operation) {
 function sendEmpty(response, status, headers = {}) {
   response.writeHead(status, { "cache-control": "no-store", ...headers });
   response.end();
+}
+
+function bundledFeishuCredentials() {
+  try {
+    const value = JSON.parse(readFileSync(path.join(PROJECT_ROOT, "feishu-app-config.json"), "utf8"));
+    if (typeof value?.appId === "string" && typeof value?.appSecret === "string") {
+      return { appId: value.appId.trim(), appSecret: value.appSecret.trim() };
+    }
+  } catch {}
+  return { appId: "", appSecret: "" };
 }
 
 function toFetchRequest(request) {
@@ -1567,6 +1579,7 @@ export function resolveServerOptions(options = {}) {
   if (instanceToken && !/^[a-f0-9-]{32,128}$/i.test(instanceSecret)) {
     throw new Error("CODEX_TASKBOARD_INSTANCE_SECRET must be set in launcher mode");
   }
+  const bundledCredentials = bundledFeishuCredentials();
   return {
     dataDirectory,
     databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
@@ -1574,11 +1587,16 @@ export function resolveServerOptions(options = {}) {
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     feishuConfigPath: options.feishuConfigPath ?? path.join(dataDirectory, "feishu-connection.json"),
     feishuAppId: String(
-      options.feishuAppId ?? process.env.CODEX_TASKBOARD_FEISHU_APP_ID ?? "",
+      options.feishuAppId ?? process.env.CODEX_TASKBOARD_FEISHU_APP_ID ?? bundledCredentials.appId,
     ).trim(),
     feishuAppSecret: String(
-      options.feishuAppSecret ?? process.env.CODEX_TASKBOARD_FEISHU_APP_SECRET ?? "",
+      options.feishuAppSecret ?? process.env.CODEX_TASKBOARD_FEISHU_APP_SECRET ?? bundledCredentials.appSecret,
     ).trim(),
+    feishuCliPath: path.resolve(String(
+      options.feishuCliPath
+        ?? process.env.CODEX_TASKBOARD_FEISHU_CLI_PATH
+        ?? resolveFeishuCliPath({ projectRoot: PROJECT_ROOT }),
+    )),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
@@ -1661,6 +1679,12 @@ export function createTaskboardServer(options = {}) {
   const feishuConfig = options.feishuConfigStore ?? createFeishuConfigStore({
     configPath: resolved.feishuConfigPath,
   });
+  const feishuCli = options.feishuCli ?? createFeishuCli({
+    executablePath: resolved.feishuCliPath,
+    dataDirectory: resolved.dataDirectory,
+    appId: resolved.feishuAppId,
+    appSecret: resolved.feishuAppSecret,
+  });
   const jira = createJiraIntegration({
     configStore: jiraConfig,
     database,
@@ -1669,10 +1693,7 @@ export function createTaskboardServer(options = {}) {
   const feishu = createFeishuIntegration({
     configStore: feishuConfig,
     database,
-    defaultCredentials: resolved.feishuAppId && resolved.feishuAppSecret
-      ? { appId: resolved.feishuAppId, appSecret: resolved.feishuAppSecret }
-      : null,
-    fetch: options.feishuFetch ?? globalThis.fetch,
+    cli: feishuCli,
   });
   let hostRuntime = null;
   function currentHostThreadBinding(threadId) {
@@ -2210,22 +2231,7 @@ export function createTaskboardServer(options = {}) {
 
       if (pathname === "/api/local/feishu-connection/callback") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
-        try {
-          assertAllowedQuery(url.searchParams, new Set(["code", "state", "error"]), "飞书授权回调");
-          if (url.searchParams.get("error")) {
-            return sendHtml(response, 400, feishuAuthorizationPage({
-              success: false,
-            }));
-          }
-          const code = stringField(url.searchParams.get("code"), "code", { required: true, maxLength: 4_096 });
-          const state = stringField(url.searchParams.get("state"), "state", { required: true, maxLength: 512 });
-          await feishu.completeAuthorization({ code, state });
-          return sendHtml(response, 200, feishuAuthorizationPage({ success: true }));
-        } catch (error) {
-          return sendHtml(response, 400, feishuAuthorizationPage({
-            success: false,
-          }));
-        }
+        return sendHtml(response, 410, feishuAuthorizationPage({ success: false }));
       }
 
       if (pathname === "/api/local/feishu-connection") {
@@ -2273,22 +2279,23 @@ export function createTaskboardServer(options = {}) {
         const body = await readJson(request);
         assertPlainObject(body);
         assertAllowedKeys(body, new Set());
-        const callback = new URL(`http://${request.headers.host ?? "127.0.0.1"}`);
-        if (callback.hostname === "0.0.0.0" || callback.hostname === "::") {
-          callback.hostname = "127.0.0.1";
-        }
-        callback.pathname = `${routePrefix}/api/local/feishu-connection/callback`;
-        callback.search = "";
         try {
           return sendJson(response, 200, {
-            authorization: await feishu.startAuthorization({
-              redirectUri: callback.toString(),
-            }),
+            authorization: await feishu.startAuthorization(),
           });
         } catch (error) {
           if (error instanceof ApiError) throw error;
           throw new ApiError(400, error.code ?? "INVALID_FEISHU_CONFIG", error.message);
         }
+      }
+
+      if (pathname === "/api/local/feishu-connection/cancel") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书授权取消接口不接受查询参数");
+        }
+        await assertEmptyRequestBody(request, "POST /api/local/feishu-connection/cancel");
+        return sendJson(response, 200, { connection: await feishu.cancelAuthorization() });
       }
 
       if (pathname === "/api/local/feishu-connection/tasklists") {
@@ -3412,6 +3419,7 @@ export function createTaskboardServer(options = {}) {
       aiEventResponses.clear();
       await aiChat.close();
       await projectSummary.close();
+      await feishu.close();
       await serverClosed;
       listening = false;
       database.close();

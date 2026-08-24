@@ -1,8 +1,7 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const CONFIG_VERSION = 1;
-const TOKEN_MAX_LENGTH = 8_192;
+const CONFIG_VERSION = 2;
 
 export class FeishuConfigError extends Error {
   constructor(code, message) {
@@ -27,14 +26,6 @@ function plainString(value, field, { required = false, maxLength = 256 } = {}) {
   return normalized || null;
 }
 
-function timestamp(value, field) {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
-    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", `${field} 必须是有效时间`);
-  }
-  return value;
-}
-
 function tasklists(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 100) {
@@ -55,47 +46,23 @@ function tasklists(value) {
 }
 
 function parseConfig(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== CONFIG_VERSION) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件无效");
   }
-  const allowedKeys = new Set([
-    "version",
-    "appId",
-    "appSecret",
-    "accessToken",
-    "accessTokenExpiresAt",
-    "refreshToken",
-    "refreshTokenExpiresAt",
-    "scopes",
-    "tasklists",
-  ]);
-  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+  if (value.version === 1) {
+    return {
+      version: CONFIG_VERSION,
+      tasklists: tasklists(value.tasklists),
+    };
+  }
+  if (value.version !== CONFIG_VERSION) {
+    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件版本无效");
+  }
+  if (Object.keys(value).some((key) => !new Set(["version", "tasklists"]).has(key))) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件包含未知字段");
-  }
-  const appId = plainString(value.appId, "App ID", { required: true, maxLength: 256 });
-  const appSecret = plainString(value.appSecret, "App Secret", { required: true, maxLength: 4_096 });
-  const accessToken = plainString(value.accessToken, "accessToken", { maxLength: TOKEN_MAX_LENGTH });
-  const refreshToken = plainString(value.refreshToken, "refreshToken", { maxLength: TOKEN_MAX_LENGTH });
-  const accessTokenExpiresAt = timestamp(value.accessTokenExpiresAt, "accessTokenExpiresAt");
-  const refreshTokenExpiresAt = timestamp(value.refreshTokenExpiresAt, "refreshTokenExpiresAt");
-  if ((accessToken === null) !== (accessTokenExpiresAt === null)) {
-    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "access token 配置不完整");
-  }
-  if ((refreshToken === null) !== (refreshTokenExpiresAt === null)) {
-    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "refresh token 配置不完整");
-  }
-  if (value.scopes !== undefined && (typeof value.scopes !== "string" || value.scopes.length > 4_096)) {
-    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "scopes 格式无效");
   }
   return {
     version: CONFIG_VERSION,
-    appId,
-    appSecret,
-    accessToken,
-    accessTokenExpiresAt,
-    refreshToken,
-    refreshTokenExpiresAt,
-    scopes: value.scopes ?? "",
     tasklists: tasklists(value.tasklists),
   };
 }
@@ -143,19 +110,6 @@ export function createFeishuConfigStore({ configPath }) {
       } catch (error) {
         if (error?.code !== "ENOENT") throw error;
       }
-    },
-    validateCredentials({ appId, appSecret }) {
-      return parseConfig({
-        version: CONFIG_VERSION,
-        appId,
-        appSecret,
-        accessToken: null,
-        accessTokenExpiresAt: null,
-        refreshToken: null,
-        refreshTokenExpiresAt: null,
-        scopes: "",
-        tasklists: [],
-      });
     },
   };
 }

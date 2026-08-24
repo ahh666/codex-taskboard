@@ -16,6 +16,7 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
+  cancelFeishuAuthorization,
   createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
@@ -3126,6 +3127,28 @@ export function App() {
     setFeishuDialogOpen(true);
   }
 
+  async function pollFeishuAuthorization() {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      try {
+        const connection = await getFeishuConnection();
+        setFeishuConnection(connection);
+        if (connection.authorizationState !== "pending") {
+          if (connection.authorized) {
+            const tasklists = await listFeishuTasklists();
+            setFeishuTasklists(tasklists);
+            setAnnouncement(text("飞书授权完成", "Feishu authorization completed"));
+          }
+          return;
+        }
+      } catch (error) {
+        setFeishuError(errorMessage(error));
+        return;
+      }
+    }
+    setFeishuError(text("飞书授权已超时，请重新生成二维码。", "Feishu authorization timed out. Generate a new QR code."));
+  }
+
   async function authorizeFeishu() {
     if (feishuSaving) return;
     const authorizationWindow = window.open("", "feishu-taskboard-oauth", "popup,width=560,height=720");
@@ -3134,16 +3157,29 @@ export function App() {
     try {
       const authorization = await startFeishuAuthorization();
       if (authorizationWindow) {
-        authorizationWindow.location.href = authorization.authorizationUrl;
+        if (authorization.authorizationUrl) authorizationWindow.location.href = authorization.authorizationUrl;
         authorizationWindow.focus();
-      } else {
+      } else if (authorization.authorizationUrl) {
         window.open(authorization.authorizationUrl, "_blank", "noopener");
       }
-      const connection = await getFeishuConnection();
-      setFeishuConnection(connection);
-      setAnnouncement(text("已打开飞书授权页", "Opened the Feishu authorization page"));
+      setFeishuConnection(authorization);
+      setAnnouncement(text("请扫码或打开飞书授权页完成授权", "Scan the QR code or open Feishu to authorize"));
+      void pollFeishuAuthorization();
     } catch (error) {
       authorizationWindow?.close();
+      setFeishuError(errorMessage(error));
+    } finally {
+      setFeishuSaving(false);
+    }
+  }
+
+  async function cancelFeishu() {
+    if (feishuSaving) return;
+    setFeishuSaving(true);
+    setFeishuError(null);
+    try {
+      setFeishuConnection(await cancelFeishuAuthorization());
+    } catch (error) {
       setFeishuError(errorMessage(error));
     } finally {
       setFeishuSaving(false);
@@ -3919,6 +3955,7 @@ export function App() {
             if (!feishuSaving) setFeishuDialogOpen(false);
           }}
           onAuthorize={authorizeFeishu}
+          onCancelAuthorization={cancelFeishu}
           onRefreshTasklists={refreshFeishuTasklists}
           onSaveTasklists={saveFeishuTasklistSelection}
         />

@@ -186,13 +186,20 @@ export async function syncJiraConnection(): Promise<JiraConnection> {
 function emptyFeishuConnection(): FeishuConnection {
   return {
     configured: false,
+    cliAvailable: false,
     authorized: false,
     appId: null,
+    displayName: null,
     authorizationReady: false,
+    authorizationState: "idle",
+    authorizationUrl: null,
+    authorizationQrCode: null,
+    authorizationExpiresAt: null,
     scopes: [],
     tasklists: [],
     projectId: "feishu-tasks",
     lastSyncedAt: null,
+    error: null,
   };
 }
 
@@ -209,12 +216,20 @@ export async function getFeishuConnection(signal?: AbortSignal): Promise<FeishuC
   }
 }
 
-export async function startFeishuAuthorization(): Promise<{ authorizationUrl: string; redirectUri: string }> {
-  const data = await request<{ authorization: { authorizationUrl: string; redirectUri: string } }>(
+export async function startFeishuAuthorization(): Promise<FeishuConnection> {
+  const data = await request<{ authorization: FeishuConnection }>(
     "/api/local/feishu-connection/authorize",
     { method: "POST", body: JSON.stringify({}) },
   );
   return data.authorization;
+}
+
+export async function cancelFeishuAuthorization(): Promise<FeishuConnection> {
+  const data = await request<{ connection: FeishuConnection }>(
+    "/api/local/feishu-connection/cancel",
+    { method: "POST" },
+  );
+  return data.connection;
 }
 
 export async function listFeishuTasklists(): Promise<FeishuTasklist[]> {

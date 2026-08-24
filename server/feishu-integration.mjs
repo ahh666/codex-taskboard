@@ -1,21 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
-
 import { FEISHU_PROJECT_ID } from "../shared/domain.mjs";
 import { ApiError } from "./database.mjs";
 
-const AUTHORIZATION_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize";
-const TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token";
-const API_ORIGIN = "https://open.feishu.cn";
-const SCOPES = ["offline_access", "task:task:read", "task:tasklist:read", "task:task:write"];
-const REQUEST_TIMEOUT_MS = 20_000;
 const SYNC_INTERVAL_MS = 60_000;
 const DETAIL_REQUEST_INTERVAL_MS = 100;
-const OAUTH_STATE_TTL_MS = 10 * 60_000;
-const TOKEN_REFRESH_SKEW_MS = 60_000;
-
-function base64url(buffer) {
-  return buffer.toString("base64url");
-}
 
 function limitedString(value, fallback, maxLength) {
   const result = String(value ?? fallback).trim();
@@ -46,9 +33,7 @@ function actorFromFeishu(member, fallback) {
 
 function normalizeTask(task, tasklistNames, index) {
   const guid = limitedString(task?.guid, "", 256);
-  if (!guid) {
-    throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书返回的任务缺少 GUID");
-  }
+  if (!guid) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书返回的任务缺少 GUID");
   const members = Array.isArray(task.members) ? task.members : [];
   const assignee = members.find((member) => member?.role === "assignee") ?? members[0] ?? task.creator;
   const creator = task.creator ?? assignee;
@@ -74,204 +59,62 @@ function normalizeTask(task, tasklistNames, index) {
   };
 }
 
-function safeConfig(config, lastSyncedAt = null, defaultCredentials = null) {
-  const authorized = Boolean(config?.accessToken || config?.refreshToken);
-  const authorizationReady = Boolean(
-    (config?.appId && config?.appSecret)
-      || (defaultCredentials?.appId && defaultCredentials?.appSecret),
-  );
-  return config
-    ? {
-      configured: true,
-      authorized,
-      appId: config.appId,
-      authorizationReady,
-      scopes: config.scopes ? config.scopes.split(" ").filter(Boolean) : [],
-      tasklists: config.tasklists,
-      projectId: FEISHU_PROJECT_ID,
-      lastSyncedAt,
-    }
-    : {
-      configured: false,
-      authorized: false,
-      appId: defaultCredentials?.appId ?? null,
-      authorizationReady,
-      scopes: [],
-      tasklists: [],
-      projectId: FEISHU_PROJECT_ID,
-      lastSyncedAt: null,
-    };
+function safeConnection(localConfig, cliStatus, lastSyncedAt, authorization = {}) {
+  const tasklists = localConfig?.tasklists ?? [];
+  const session = authorization.state ? authorization : cliStatus;
+  const authorizationState = session.state ?? session.authorizationState
+    ?? (cliStatus.authorized ? "authorized" : "idle");
+  return {
+    configured: Boolean(cliStatus.configured || tasklists.length > 0),
+    cliAvailable: cliStatus.cliAvailable !== false,
+    authorized: cliStatus.authorized === true,
+    authorizationReady: cliStatus.cliAvailable !== false && cliStatus.configured === true,
+    authorizationState,
+    authorizationUrl: session.authorizationUrl ?? null,
+    authorizationQrCode: session.authorizationQrCode ?? null,
+    authorizationExpiresAt: session.authorizationExpiresAt ?? null,
+    appId: cliStatus.appId ?? null,
+    displayName: cliStatus.displayName ?? null,
+    scopes: cliStatus.scopes ?? [],
+    tasklists,
+    projectId: FEISHU_PROJECT_ID,
+    lastSyncedAt,
+    error: session.error ?? cliStatus.error ?? null,
+  };
 }
 
-function expiresAt(seconds) {
-  const value = Number(seconds);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书未返回有效的令牌过期时间");
-  }
-  return new Date(Date.now() + value * 1_000).toISOString();
-}
-
-export function createFeishuIntegration({
-  configStore,
-  database,
-  defaultCredentials = null,
-  fetch: fetchImplementation = globalThis.fetch,
-}) {
+export function createFeishuIntegration({ configStore, database, cli }) {
+  if (!configStore) throw new Error("configStore is required");
+  if (!database) throw new Error("database is required");
+  if (!cli) throw new Error("cli is required");
   let lastSyncedAt = null;
   let pendingSync = null;
-  let pendingAuthorization = null;
-  let pendingTokenRefresh = null;
 
-  async function fetchJson(url, init, failureCode, failureMessage) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    timeout.unref?.();
-    let response;
-    try {
-      response = await fetchImplementation(url, { ...init, signal: controller.signal });
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === "AbortError";
-      throw new ApiError(
-        502,
-        timedOut ? "FEISHU_TIMEOUT" : failureCode,
-        timedOut ? "连接飞书超时" : failureMessage,
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-    let payload;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书返回了无效的 JSON 数据");
-    }
-    if (!response.ok || payload?.code !== 0) {
-      const code = Number(payload?.code);
-      const authorizationError = response.status === 401
-        || response.status === 403
-        || [99991661, 99991663, 99991668, 99991679].includes(code);
-      throw new ApiError(
-        authorizationError ? 401 : response.status >= 500 ? 502 : 409,
-        authorizationError ? "FEISHU_AUTH_FAILED" : failureCode,
-        authorizationError ? "飞书授权已失效或权限不足，请重新授权" : `${failureMessage}${payload?.msg ? `：${payload.msg}` : ""}`,
-      );
-    }
-    return payload.data ?? payload;
+  async function readConfig() {
+    return (await configStore.read()) ?? { version: 2, tasklists: [] };
   }
 
-  async function requestToken(body) {
-    return fetchJson(TOKEN_URL, {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }, "FEISHU_TOKEN_FAILED", "无法获取飞书用户令牌");
+  async function connectionStatus(authorization = {}) {
+    return safeConnection(await readConfig(), await cli.status(), lastSyncedAt, authorization);
   }
 
-  async function refreshAccessToken(config) {
-    if (!config.refreshToken || !config.refreshTokenExpiresAt || Date.parse(config.refreshTokenExpiresAt) <= Date.now()) {
-      throw new ApiError(401, "FEISHU_REAUTH_REQUIRED", "飞书授权已过期，请重新授权");
+  async function requireAuthorized() {
+    const status = await cli.status();
+    if (!status.authorized) {
+      throw new ApiError(401, "FEISHU_REAUTH_REQUIRED", "请先完成飞书登录授权");
     }
-    const token = await requestToken({
-      grant_type: "refresh_token",
-      client_id: config.appId,
-      client_secret: config.appSecret,
-      refresh_token: config.refreshToken,
-    });
-    if (typeof token.access_token !== "string" || typeof token.refresh_token !== "string") {
-      throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书未返回可刷新的用户令牌");
-    }
-    return configStore.save({
-      ...config,
-      accessToken: token.access_token,
-      accessTokenExpiresAt: expiresAt(token.expires_in),
-      refreshToken: token.refresh_token,
-      refreshTokenExpiresAt: expiresAt(token.refresh_token_expires_in),
-      scopes: typeof token.scope === "string" ? token.scope : config.scopes,
-    });
-  }
-
-  async function activeConfig() {
-    let config = await configStore.read();
-    if (!config?.accessToken || !config.accessTokenExpiresAt) {
-      if (!config) throw new ApiError(409, "FEISHU_NOT_CONFIGURED", "飞书尚未配置");
-      return refreshAccessTokenOnce(config);
-    }
-    if (Date.parse(config.accessTokenExpiresAt) - Date.now() <= TOKEN_REFRESH_SKEW_MS) {
-      config = await refreshAccessTokenOnce(config);
-    }
-    return config;
-  }
-
-  function refreshAccessTokenOnce(config) {
-    if (!pendingTokenRefresh) {
-      pendingTokenRefresh = refreshAccessToken(config)
-        .finally(() => { pendingTokenRefresh = null; });
-    }
-    return pendingTokenRefresh;
-  }
-
-  async function request(config, pathname, init = {}) {
-    const data = await fetchJson(`${API_ORIGIN}${pathname}`, {
-      ...init,
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${config.accessToken}`,
-        ...(init.body ? { "content-type": "application/json" } : {}),
-        ...init.headers,
-      },
-    }, "FEISHU_REQUEST_FAILED", "飞书任务请求失败");
-    return data;
-  }
-
-  async function listTasklistsWithConfig(config) {
-    const tasklists = [];
-    let pageToken = null;
-    do {
-      const query = new URLSearchParams({ page_size: "100" });
-      if (pageToken) query.set("page_token", pageToken);
-      const page = await request(config, `/open-apis/task/v2/tasklists?${query}`);
-      const items = Array.isArray(page?.items) ? page.items : [];
-      for (const item of items) {
-        if (typeof item?.guid !== "string" || typeof item?.name !== "string") continue;
-        tasklists.push({
-          guid: item.guid,
-          name: item.name,
-          url: typeof item.url === "string" ? item.url : null,
-        });
-      }
-      pageToken = page?.has_more && typeof page?.page_token === "string" ? page.page_token : null;
-    } while (pageToken);
-    return tasklists;
-  }
-
-  async function listTasklistTasks(config, tasklistGuid) {
-    const tasks = [];
-    let pageToken = null;
-    do {
-      const query = new URLSearchParams({ page_size: "100" });
-      if (pageToken) query.set("page_token", pageToken);
-      const page = await request(
-        config,
-        `/open-apis/task/v2/tasklists/${encodeURIComponent(tasklistGuid)}/tasks?${query}`,
-      );
-      tasks.push(...(Array.isArray(page?.items) ? page.items : []));
-      pageToken = page?.has_more && typeof page?.page_token === "string" ? page.page_token : null;
-    } while (pageToken);
-    return tasks;
+    return status;
   }
 
   async function syncWithConfig(config, { archiveMissing = true } = {}) {
     if (config.tasklists.length === 0) {
-      database.syncFeishuTasks([], {
-        archiveMissing,
-        projectName: "飞书任务",
-      });
+      database.syncFeishuTasks([], { archiveMissing, projectName: "飞书任务" });
       lastSyncedAt = new Date().toISOString();
-      return safeConfig(config, lastSyncedAt, defaultCredentials);
+      return connectionStatus();
     }
     const tasklistNames = new Map();
     for (const tasklist of config.tasklists) {
-      const summaries = await listTasklistTasks(config, tasklist.guid);
+      const summaries = await cli.listTasklistTasks(tasklist.guid);
       for (const summary of summaries) {
         if (typeof summary?.guid !== "string") continue;
         const names = tasklistNames.get(summary.guid) ?? new Set();
@@ -281,121 +124,59 @@ export function createFeishuIntegration({
     }
     const tasks = [];
     for (const [guid, names] of tasklistNames) {
-      const data = await request(config, `/open-apis/task/v2/tasks/${encodeURIComponent(guid)}`);
-      tasks.push(normalizeTask(data?.task, names, tasks.length));
+      const task = await cli.getTask(guid);
+      tasks.push(normalizeTask(task, names, tasks.length));
       if (tasks.length < tasklistNames.size) {
         await new Promise((resolve) => setTimeout(resolve, DETAIL_REQUEST_INTERVAL_MS));
       }
     }
-    database.syncFeishuTasks(tasks, {
-      archiveMissing,
-      projectName: "飞书任务",
-    });
+    database.syncFeishuTasks(tasks, { archiveMissing, projectName: "飞书任务" });
     lastSyncedAt = new Date().toISOString();
-    return safeConfig(config, lastSyncedAt, defaultCredentials);
+    return connectionStatus();
   }
 
   return {
     async status() {
-      return safeConfig(await configStore.read(), lastSyncedAt, defaultCredentials);
+      return connectionStatus();
     },
-    async startAuthorization({ redirectUri }) {
-      const current = await configStore.read();
-      const configuredCredentials = current?.appId && current?.appSecret
-        ? { appId: current.appId, appSecret: current.appSecret }
-        : null;
-      const credentials = defaultCredentials?.appId && defaultCredentials?.appSecret
-        ? defaultCredentials
-        : configuredCredentials;
-      if (!credentials) {
-        throw new ApiError(
-          409,
-          "FEISHU_APP_CONFIG_REQUIRED",
-          "服务端尚未配置固定飞书应用，请设置 CODEX_TASKBOARD_FEISHU_APP_ID 和 CODEX_TASKBOARD_FEISHU_APP_SECRET",
-        );
-      }
-      const candidate = configStore.validateCredentials(credentials);
-      const config = await configStore.save({
-        ...candidate,
-        tasklists: current?.appId === candidate.appId ? current.tasklists : [],
-      });
-      const verifier = base64url(randomBytes(64));
-      const state = base64url(randomBytes(32));
-      const challenge = createHash("sha256").update(verifier).digest("base64url");
-      pendingAuthorization = {
-        state,
-        verifier,
-        redirectUri,
-        expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-      };
-      const authorizationUrl = new URL(AUTHORIZATION_URL);
-      authorizationUrl.searchParams.set("client_id", config.appId);
-      authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-      authorizationUrl.searchParams.set("state", state);
-      authorizationUrl.searchParams.set("scope", SCOPES.join(" "));
-      authorizationUrl.searchParams.set("code_challenge", challenge);
-      authorizationUrl.searchParams.set("code_challenge_method", "S256");
-      return { authorizationUrl: authorizationUrl.toString(), redirectUri };
+    async startAuthorization() {
+      const authorization = await cli.startAuthorization();
+      return connectionStatus(authorization);
     },
-    async completeAuthorization({ code, state }) {
-      const pending = pendingAuthorization;
-      pendingAuthorization = null;
-      if (!pending || pending.expiresAt < Date.now() || state !== pending.state) {
-        throw new ApiError(400, "FEISHU_OAUTH_STATE_INVALID", "飞书授权请求已过期，请返回 Taskboard 重新发起授权");
-      }
-      const config = await configStore.read();
-      if (!config) throw new ApiError(409, "FEISHU_NOT_CONFIGURED", "飞书配置已丢失，请重新发起授权");
-      const token = await requestToken({
-        grant_type: "authorization_code",
-        client_id: config.appId,
-        client_secret: config.appSecret,
-        code,
-        redirect_uri: pending.redirectUri,
-        code_verifier: pending.verifier,
-      });
-      if (typeof token.access_token !== "string" || typeof token.refresh_token !== "string") {
-        throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书未返回可刷新的用户令牌，请检查 offline_access 权限");
-      }
-      const savedConfig = await configStore.save({
-        ...config,
-        accessToken: token.access_token,
-        accessTokenExpiresAt: expiresAt(token.expires_in),
-        refreshToken: token.refresh_token,
-        refreshTokenExpiresAt: expiresAt(token.refresh_token_expires_in),
-        scopes: typeof token.scope === "string" ? token.scope : "",
-      });
-      return safeConfig(savedConfig, lastSyncedAt, defaultCredentials);
+    async cancelAuthorization() {
+      await cli.cancelAuthorization();
+      return connectionStatus();
     },
     async listTasklists() {
-      return listTasklistsWithConfig(await activeConfig());
+      await requireAuthorized();
+      return cli.listTasklists();
     },
     async saveTasklists(input) {
-      const config = await activeConfig();
-      const available = await listTasklistsWithConfig(config);
+      await requireAuthorized();
+      const available = await cli.listTasklists();
       const availableByGuid = new Map(available.map((tasklist) => [tasklist.guid, tasklist]));
       const selected = input.map((tasklist) => availableByGuid.get(tasklist.guid)).filter(Boolean);
       if (selected.length !== input.length) {
         throw new ApiError(409, "FEISHU_TASKLIST_UNAVAILABLE", "所选飞书任务清单已不可访问，请刷新清单后重试");
       }
-      const savedConfig = await configStore.save({ ...config, tasklists: selected });
+      const savedConfig = await configStore.save({ version: 2, tasklists: selected });
       return syncWithConfig(savedConfig);
     },
     async sync({ force = false } = {}) {
-      const config = await configStore.read();
-      if (!config?.accessToken && !config?.refreshToken) {
-        return safeConfig(config, null, defaultCredentials);
-      }
+      const config = await readConfig();
+      const status = await cli.status();
+      if (!status.authorized) return safeConnection(config, status, lastSyncedAt);
       if (!force && lastSyncedAt && Date.now() - Date.parse(lastSyncedAt) < SYNC_INTERVAL_MS) {
-        return safeConfig(config, lastSyncedAt, defaultCredentials);
+        return safeConnection(config, status, lastSyncedAt);
       }
       if (pendingSync) return pendingSync;
-      pendingSync = activeConfig()
-        .then((active) => syncWithConfig(active))
+      pendingSync = syncWithConfig(config)
         .finally(() => { pendingSync = null; });
       return pendingSync;
     },
     async reconcile() {
-      return syncWithConfig(await activeConfig(), { archiveMissing: false });
+      await requireAuthorized();
+      return syncWithConfig(await readConfig(), { archiveMissing: false });
     },
     async updateTask(task, changes) {
       if (task.externalOrigin !== "feishu" || !task.externalId) {
@@ -422,11 +203,12 @@ export function createFeishuIntegration({
         updateFields.push("completed_at");
       }
       if (updateFields.length === 0) return false;
-      await request(await activeConfig(), `/open-apis/task/v2/tasks/${encodeURIComponent(task.externalId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ task: update, update_fields: updateFields }),
-      });
+      await requireAuthorized();
+      await cli.patchTask(task.externalId, { task: update, update_fields: updateFields });
       return true;
+    },
+    async close() {
+      await cli.close?.();
     },
   };
 }

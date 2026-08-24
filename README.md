@@ -34,14 +34,14 @@ The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the loca
 
 Taskboard can sync the Feishu task lists that the authorized user can read, including teammate-owned tasks in shared lists. This is not an integration with Feishu Project work items.
 
-Configure the fixed Feishu custom app in the local service environment before starting Taskboard: `CODEX_TASKBOARD_FEISHU_APP_ID` and `CODEX_TASKBOARD_FEISHU_APP_SECRET`. Then choose “Connect Feishu tasks” from the project menu, register the full callback address displayed by the dialog in the Feishu developer console, and click “Sign in and authorize Feishu” to complete browser authorization. The app secret is read only by the local service; the frontend never asks for or stores it. An administrator must approve these user scopes for the custom app:
+For development, configure the fixed Feishu custom app with `CODEX_TASKBOARD_FEISHU_APP_ID` and `CODEX_TASKBOARD_FEISHU_APP_SECRET`; release builds inject the same values during `app:prepare` and keep them out of Git. Then choose “Connect Feishu tasks” from the project menu. Taskboard starts the bundled official `lark-cli` only after that click and displays a QR code plus an authorization link. The frontend never asks for or stores the app secret. An administrator must approve these user scopes for the custom app:
 
 - `task:task:read`
 - `task:tasklist:read`
 - `task:task:write`
 - `offline_access`
 
-After authorization, refresh and select the task lists to sync. Taskboard projects every task into the “Feishu tasks” project and can write back the title, description, due date, and todo/done state. Create, reassignment, comments, attachments, dependencies, priorities, and labels remain managed in Feishu. Local credentials are stored in `.data/feishu-connection.json` with `0600` permissions.
+After authorization, Taskboard lists the task lists available to that user. Select the task lists to sync. Taskboard projects every task into the “Feishu tasks” project and can write back the title, description, due date, and todo/done state. Create, reassignment, comments, attachments, dependencies, priorities, and labels remain managed in Feishu. Tasklist selections are stored in `.data/feishu-connection.json`; user tokens are managed by the bundled CLI profile in the operating system keychain.
 
 ## Use the CLI
 
