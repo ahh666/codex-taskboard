@@ -2,7 +2,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ClipboardEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
@@ -13,6 +12,7 @@ import {
   createComment,
   deleteAttachment,
   deleteComment,
+  getTask,
   listAttachments,
   listComments,
   listTaskActivities,
@@ -35,6 +35,7 @@ import type {
   CodexThreadBinding,
   DevelopmentContext,
   DevelopmentScan,
+  IssueRelationOrigin,
   IssueRelationType,
   Recurrence,
   Task,
@@ -67,7 +68,6 @@ import {
   ProjectIcon,
   RecurrenceIcon,
   RelationIcon,
-  StartDateIcon,
   StatusIcon,
 } from "./SemanticIcons";
 import {
@@ -77,13 +77,11 @@ import {
 } from "./PendingAttachments";
 import {
   createInlineMediaSegments,
-  createInlineMediaSegmentsFromHtml,
   InlineMediaComposer,
   inlineMediaImages,
   inlineMediaText,
   resolveInlineMediaMarkdown,
   serializeInlineMedia,
-  writeInlineMediaClipboard,
   type InlineMediaComposerHandle,
   type InlineMediaSegment,
 } from "./InlineMediaComposer";
@@ -94,11 +92,11 @@ import {
   type RelationMutationResult,
 } from "./IssueRelations";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
-import { buildIssueUrl, readIssueIdentifier } from "../issueRoute";
+import { buildIssueUrl } from "../issueRoute";
 import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
-import { MarkdownDocument } from "./MarkdownDocument";
+import { DescriptionDocument } from "./DescriptionDocument";
 
 type TaskDetailError = string | readonly [string, string];
 
@@ -120,11 +118,13 @@ interface TaskDetailProps {
     task: Task,
     type: IssueRelationType,
     relatedTaskId: string,
+    origin?: IssueRelationOrigin,
   ) => Promise<RelationMutationResult>;
   onRemoveRelation: (
     task: Task,
     type: IssueRelationType,
     relatedTaskId: string,
+    origin?: IssueRelationOrigin,
   ) => Promise<RelationMutationResult>;
   onOpenThread: (binding: CodexThreadBinding) => void;
   onOpenLegacyLocalThread: (threadId: string) => void;
@@ -331,107 +331,11 @@ function ActivityChangeIcon({ field, before, after }: {
   if (field === "labels") return <LabelIcon color="currentColor" size={14} />;
   if (field === "assignee") return <LinearIcon name="myIssues" />;
   if (field === "developmentContext") return <BranchIcon color="currentColor" size={14} />;
-  if (field === "startDate") return <StartDateIcon color="currentColor" size={14} />;
+  if (field === "startDate") return <DueDateIcon color="currentColor" size={14} />;
   if (field === "dueDate") return <DueDateIcon color="currentColor" size={14} />;
   if (field === "recurrence") return <RecurrenceIcon color="currentColor" size={14} />;
   if (field === "archivedAt") return <DeleteIcon color="currentColor" size={14} />;
   return <EditIcon color="currentColor" size={14} />;
-}
-
-function referencedTask(
-  href: string,
-  referenceTasks: Task[],
-): { identifier: string; task: Task | null } | null {
-  try {
-    const base = new URL(document.baseURI);
-    base.search = "";
-    base.hash = "";
-    const url = new URL(href, base);
-    if (url.origin !== base.origin || url.pathname !== base.pathname) return null;
-    const identifier = readIssueIdentifier(url.search);
-    const projectId = url.searchParams.get("project");
-    if (!identifier || !projectId) return null;
-    const task = referenceTasks.find((candidate) => (
-      candidate.projectId === projectId && candidate.identifier === identifier
-    )) ?? null;
-    return { identifier: task?.externalKey ?? identifier, task };
-  } catch {
-    return null;
-  }
-}
-
-function DescriptionDocument({
-  value,
-  referenceTasks,
-  onOpenTask,
-}: {
-  value: string;
-  referenceTasks: Task[];
-  onOpenTask: (task: TaskRelationSummary) => void;
-}) {
-  return (
-    <MarkdownDocument
-      value={value}
-      onCopy={(event: ClipboardEvent<HTMLDivElement>) => {
-        const selection = event.currentTarget.ownerDocument.getSelection();
-        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
-        const range = selection.getRangeAt(0);
-        if (
-          !event.currentTarget.contains(range.startContainer)
-          || !event.currentTarget.contains(range.endContainer)
-        ) return;
-        const selectedRange = range.cloneRange();
-        const wrapper = event.currentTarget.ownerDocument.createElement("div");
-        wrapper.append(selectedRange.cloneContents());
-        const segments = createInlineMediaSegmentsFromHtml(wrapper.innerHTML, referenceTasks);
-        if (!segments) return;
-        event.preventDefault();
-        writeInlineMediaClipboard(
-          event.clipboardData,
-          segments,
-          event.currentTarget.ownerDocument,
-        );
-      }}
-      renderLink={(href) => {
-        const reference = href ? referencedTask(href, referenceTasks) : null;
-        if (!reference) return null;
-        const { task } = reference;
-        if (!task) {
-          return (
-            <span className="issue-reference-inline">
-              <span className="issue-reference-identity">
-                <span className="issue-reference-id">{reference.identifier}</span>
-              </span>
-            </span>
-          );
-        }
-        return (
-          <span className={`issue-reference-inline issue-reference-status-${task.status}`}>
-            <span className="issue-reference-identity">
-              <span className={`status-icon issue-reference-status status-icon-${STATUS_DETAILS[task.status].tone}`}>
-                <StatusIcon status={task.status} size={15} />
-              </span>
-              <span className="issue-reference-id">{task.externalKey ?? task.identifier}</span>
-            </span>
-            <span className="issue-reference-title">{task.title}</span>
-          </span>
-        );
-      }}
-      onLinkClick={(event, href) => {
-        const reference = href ? referencedTask(href, referenceTasks) : null;
-        if (
-          !reference
-          || event.button !== 0
-          || event.metaKey
-          || event.ctrlKey
-          || event.shiftKey
-          || event.altKey
-        ) return;
-        event.preventDefault();
-        if (reference.task) onOpenTask(reference.task);
-      }}
-    />
-  );
 }
 
 function ConversationLink({
@@ -702,10 +606,60 @@ export function TaskDetail({
         || relatedIds.has(relatedTaskId)
       ) continue;
       const result = await applyRelationMutation(
-        () => onAddRelation(current, "related", relatedTaskId),
+        () => onAddRelation(current, "related", relatedTaskId, "mention"),
       );
       current = result.task;
       relatedIds.add(relatedTaskId);
+    }
+    return current;
+  }
+
+  function mentionTaskIds(segments: InlineMediaSegment[]): Set<string> {
+    return new Set(segments.flatMap((segment) => (
+      segment.type === "issue-reference" && segment.taskId ? [segment.taskId] : []
+    )));
+  }
+
+  function removedMentionTaskIds(
+    previous: InlineMediaSegment[],
+    next: InlineMediaSegment[],
+  ): Set<string> {
+    const nextIds = mentionTaskIds(next);
+    return new Set([...mentionTaskIds(previous)].filter((taskId) => !nextIds.has(taskId)));
+  }
+
+  async function removeUnreferencedMentionRelations(
+    anchor: Task,
+    candidates: Set<string>,
+  ): Promise<Task> {
+    if (candidates.size === 0) return anchor;
+    const savedComments = await listComments(anchor.id);
+    const referencedIds = mentionTaskIds(createInlineMediaSegments(anchor.description, referenceTasks));
+    for (const comment of savedComments) {
+      for (const taskId of mentionTaskIds(createInlineMediaSegments(comment.body, referenceTasks))) {
+        referencedIds.add(taskId);
+      }
+    }
+
+    let current = anchor;
+    for (const relatedTaskId of candidates) {
+      if (
+        referencedIds.has(relatedTaskId)
+        || !current.relations.related.some((relation) => relation.id === relatedTaskId)
+      ) continue;
+      const relatedTask = await getTask(relatedTaskId);
+      if (
+        mentionTaskIds(createInlineMediaSegments(relatedTask.description, referenceTasks))
+          .has(anchor.id)
+      ) continue;
+      const relatedComments = await listComments(relatedTaskId);
+      if (relatedComments.some((comment) => (
+        mentionTaskIds(createInlineMediaSegments(comment.body, referenceTasks)).has(anchor.id)
+      ))) continue;
+      const result = await applyRelationMutation(
+        () => onRemoveRelation(current, "related", relatedTaskId, "mention"),
+      );
+      current = result.task;
     }
     return current;
   }
@@ -743,6 +697,10 @@ export function TaskDetail({
       setEditingDescription(false);
       return;
     }
+    const removedMentionIds = removedMentionTaskIds(
+      createInlineMediaSegments(currentTask.description, referenceTasks),
+      descriptionSegments,
+    );
 
     setSavingProperty("description");
     onError(null);
@@ -760,7 +718,11 @@ export function TaskDetail({
         return null;
       });
       if (!saved) return;
-      const savedWithRelations = await addMentionRelations(saved, descriptionSegments);
+      const savedWithAddedRelations = await addMentionRelations(saved, descriptionSegments);
+      const savedWithRelations = await removeUnreferencedMentionRelations(
+        savedWithAddedRelations,
+        removedMentionIds,
+      );
       setCurrentTask(savedWithRelations);
       setDescription(savedWithRelations.description);
       setDescriptionSegments(createInlineMediaSegments(savedWithRelations.description, referenceTasks));
@@ -802,9 +764,9 @@ export function TaskDetail({
       setCommentSegments(createInlineMediaSegments());
       setPendingCommentFiles([]);
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
-      let relationAnchor = currentTask;
+      let relationAnchor = await getTask(currentTask.id);
       if (changeStatusToTodo) {
-        const saved = await onUpdate(currentTask, { status: "todo" });
+        const saved = await onUpdate(relationAnchor, { status: "todo" });
         setCurrentTask(saved);
         relationAnchor = saved;
         setChangeStatusToTodo(false);
@@ -868,6 +830,10 @@ export function TaskDetail({
       if (body === comment.body) endCommentEdit();
       return;
     }
+    const removedMentionIds = removedMentionTaskIds(
+      createInlineMediaSegments(comment.body, referenceTasks),
+      editingSegments,
+    );
     setSavingCommentId(comment.id);
     setCommentsError(null);
     try {
@@ -885,7 +851,12 @@ export function TaskDetail({
         resolveInlineMediaMarkdown(body, editingInlineImages, uploaded).trim(),
       );
       setComments((current) => current.map((item) => item.id === updated.id ? updated : item));
-      const savedWithRelations = await addMentionRelations(currentTask, editingSegments);
+      const relationAnchor = await getTask(currentTask.id);
+      const savedWithAddedRelations = await addMentionRelations(relationAnchor, editingSegments);
+      const savedWithRelations = await removeUnreferencedMentionRelations(
+        savedWithAddedRelations,
+        removedMentionIds,
+      );
       setCurrentTask(savedWithRelations);
       endCommentEdit();
     } catch (error) {
@@ -897,12 +868,20 @@ export function TaskDetail({
 
   async function confirmDelete() {
     if (!pendingDelete || deleting) return;
+    const removedMentionIds = mentionTaskIds(
+      createInlineMediaSegments(pendingDelete.body, referenceTasks),
+    );
     setDeleting(true);
     setCommentsError(null);
     try {
       await deleteComment(pendingDelete);
       setComments((current) => current.filter((comment) => comment.id !== pendingDelete.id));
       setPendingDelete(null);
+      const savedWithRelations = await removeUnreferencedMentionRelations(
+        currentTask,
+        removedMentionIds,
+      );
+      setCurrentTask(savedWithRelations);
     } catch (error) {
       setCommentsError(messageFor(error));
     } finally {
@@ -1694,7 +1673,7 @@ export function TaskDetail({
                 options={TASK_STATUSES.map((status) => ({
                   value: status,
                   label: taskStatusLabel(language, status),
-                  icon: <StatusIcon status={status} size={14} />,
+                  icon: <StatusIcon status={status} color="currentColor" size={14} />,
                   className: `status-icon-${STATUS_DETAILS[status].tone}`,
                 })).filter((option) => (
                   !isFeishuTask || option.value === "todo" || option.value === "done"
@@ -1825,7 +1804,7 @@ export function TaskDetail({
                 }
               }}
             >
-              <span className="detail-property-icon" aria-hidden="true"><StartDateIcon color="currentColor" size={14} /></span>
+              <span className="detail-property-icon" aria-hidden="true"><DueDateIcon color="currentColor" size={14} /></span>
               <span className="detail-property-label">{text("开始日期", "Start date")}</span>
               <input
                 type="date"

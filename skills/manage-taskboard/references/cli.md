@@ -1,6 +1,14 @@
 # taskctl CLI
 
-`taskctl` emits JSON. Add `--json` when making the output contract explicit.
+`taskctl` emits JSON for normal commands. Add `--json` when making the output contract explicit. Built-in help is the only successful stdout exception: it writes plain text, exits with code `0`, and does not request the Taskboard service.
+
+Use built-in help for the current command tree or a specific supported level:
+
+```bash
+taskctl --help
+taskctl issue --help
+taskctl comment list --help
+```
 
 ## Terminology: local companion
 
@@ -44,7 +52,7 @@ taskctl cloud logout [--json]
 
 Every issue or comment write must be attributed to a Codex conversation. In Codex, `taskctl` reads the current conversation from `CODEX_THREAD_ID`. Outside Codex, pass `--thread-id ID` explicitly. An explicit option takes precedence over the environment. Read commands do not require a conversation id.
 
-Every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `2`. Errors write one JSON object to stderr. Exit codes are `0` for success, `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
+Except for built-in help, every successful command writes one JSON object with `schemaVersion` to stdout. The current schema version is `2`. Errors write one JSON object to stderr. Exit codes are `0` for success, `2` for invalid input, `3` when the service is unavailable, `4` for API or response errors, and `5` for conflicts.
 
 ## Read issues
 
@@ -146,11 +154,13 @@ For `blocks`, the anchor issue blocks the related issue. For `blocked_by`, the r
 Use the issue id to read or append comments. Comment updates and deletes require the latest comment `version` returned by `comment list`.
 
 ```bash
-taskctl comment list ISSUE_ID [--json]
-taskctl comment add ISSUE_ID --body TEXT [--thread-id ID] [--json]
+taskctl comment list ISSUE_ID [--after CURSOR] [--json]
+taskctl comment add ISSUE_ID (--body TEXT | --body-file FILE) [--thread-id ID] [--json]
 taskctl comment update COMMENT_ID --body TEXT --if-version N [--thread-id ID] [--json]
 taskctl comment delete COMMENT_ID --if-version N [--thread-id ID] [--json]
 ```
+
+Without `--after`, `comment list` returns the full list. Its response includes `nextCursor`; keep that value and pass it to the next read of the same issue to return only comments created or modified after that cursor. `--body-file` reads the UTF-8 file and passes its contents directly to the existing comment write path.
 
 Each comment JSON object independently records the most recent conversation that created or changed that comment as `threadId`. Comment operations never change the parent issue's `threadId`.
 
@@ -165,9 +175,12 @@ Issue descriptions and comments may contain inline images at exact positions in 
 Upload a local file to a task or a comment. Provide exactly one of `--task` or `--comment`:
 
 ```bash
+taskctl attachment list (--task TASK_ID | --comment COMMENT_ID) [--after CURSOR] [--json]
 taskctl attachment upload --task TASK_ID --file PATH [--content-type TYPE] [--kind inline|attachment] [--json]
 taskctl attachment upload --comment COMMENT_ID --file PATH [--content-type TYPE] [--kind inline|attachment] [--json]
 ```
+
+Without `--after`, `attachment list` returns the full list for that task or comment. Its response includes `nextCursor`; keep a separate cursor for every attachment list target and pass it to the next read to return only later attachments.
 
 The command sends the file bytes to:
 

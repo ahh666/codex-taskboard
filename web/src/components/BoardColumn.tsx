@@ -19,13 +19,6 @@ export const STATUS_DETAILS: Record<
   canceled: { label: "取消", tone: "canceled" },
 };
 
-const COLUMN_ADD_COLORS: Partial<Record<TaskStatus, string>> = {
-  todo: "var(--status-todo)",
-  in_progress: "var(--status-progress)",
-  in_review: "var(--status-review)",
-  blocked: "var(--status-blocked)",
-};
-
 interface BoardColumnProps {
   scrollRef: (element: HTMLDivElement | null) => void;
   status: TaskStatus;
@@ -155,7 +148,7 @@ export function BoardColumn({
       <header className="column-header">
         <div className="column-heading">
           <span className={`column-status-icon status-icon-${details.tone}`}>
-            <StatusIcon status={status} size={14} />
+            <StatusIcon status={status} color="var(--column-status-color)" size={14} />
           </span>
           <h2 id={`column-${status}`}>
             {label}{tasks.length > 0 && (
@@ -172,7 +165,7 @@ export function BoardColumn({
               aria-label={text(`在${label}中新建议题`, `Create issue in ${label}`)}
               title={text(`添加到${label}`, `Add to ${label}`)}
             >
-              <PlusIcon color={COLUMN_ADD_COLORS[status] ?? "var(--text-quaternary)"} size={12} />
+              <PlusIcon color="var(--column-status-color)" size={12} />
             </button>
           </div>
         )}

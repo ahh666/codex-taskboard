@@ -126,6 +126,32 @@ Open `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboa
 
 The App contains its own Node runtime, Taskboard service, built web UI, Skill, CLI wrapper, and injection script. It starts the service, reuses an open Codex with a reachable CDP renderer, opens Taskboard in the native browser panel of an ordinary Codex without CDP, or launches the official Codex app when no Codex is open. It waits for the renderer, injects the sidebar entry when CDP is available, and opens the panel without showing a terminal window. The App can be copied away from this checkout; the target Mac only needs the official Codex app and does not need this repository, a system Node installation, or a separate Codex CLI installation. Taskboard data is stored in `~/Library/Application Support/Codex Taskboard`, and launcher output is written to `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`.
 
+### Linux App: Ubuntu 24.04 x64 packages
+
+The first Linux desktop release supports Ubuntu 24.04 LTS on x64 only. Install the official ChatGPT desktop `.deb` first and confirm that `chatgpt` opens it. Then download either the Codex Taskboard `.deb` or `.AppImage` from [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest). Replace `<file>` below with the downloaded filename.
+
+Install the `.deb` package:
+
+```bash
+sudo apt install ./<file>.deb
+```
+
+Or run the AppImage:
+
+```bash
+chmod +x ./<file>.AppImage
+./<file>.AppImage
+```
+
+To build both packages on Ubuntu 24.04 x64, run:
+
+```bash
+npm ci
+npm run app:build:linux:x64
+```
+
+This first release does not support ARM64, Fedora, RPM packages, or other Linux distributions.
+
 ### Windows code signing
 
 For official Windows releases after the application is approved: **Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).** Current Windows CI artifacts remain unsigned until that approval. See the [Code signing policy](docs/code-signing-policy.md), [Privacy policy](PRIVACY.md), and [Windows uninstall instructions](docs/windows-uninstall.md).

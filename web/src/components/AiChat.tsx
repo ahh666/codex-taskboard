@@ -189,6 +189,7 @@ type PanelResizeSession = {
 };
 
 const LAST_THREAD_KEY = "taskboard.aiChat.lastThreadId";
+const PANEL_VIEW_KEY = "taskboard.aiChat.panelView";
 const PANEL_GEOMETRY_KEY = "taskboard.aiChat.panelGeometry";
 const PANEL_EDGE_GAP = 8;
 const PANEL_MIN_WIDTH = 420;
@@ -1303,7 +1304,9 @@ export function AiChat({
 }: AiChatProps) {
   const { locale, text } = useTaskboardI18n();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(
+    () => taskboardStorage.getItem(PANEL_VIEW_KEY) === "history",
+  );
   const [menu, setMenu] = useState<MenuName>(null);
   const [threads, setThreads] = useState<AiChatThread[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
@@ -1373,6 +1376,10 @@ export function AiChat({
     if (selectedThreadId) taskboardStorage.setItem(LAST_THREAD_KEY, selectedThreadId);
     else taskboardStorage.removeItem(LAST_THREAD_KEY);
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    taskboardStorage.setItem(PANEL_VIEW_KEY, historyOpen ? "history" : "thread");
+  }, [historyOpen]);
 
   useEffect(() => {
     panelOpenRef.current = panelOpen;
@@ -1548,6 +1555,7 @@ export function AiChat({
     try {
       const next = await listAiChatThreads();
       setThreads(next);
+      if (next.length === 0) setHistoryOpen(false);
       setSelectedThreadId((current) => {
         const selected = current && next.some((thread) => thread.id === current)
           ? current
@@ -1743,21 +1751,12 @@ export function AiChat({
       event.preventDefault();
       event.stopPropagation();
       if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-      if (dangerConfirmOpen) setPendingDangerInput(null);
-      else if (composerQueryState) {
-        dismissedComposerQueryRef.current = `${composerQueryState.trigger}${composerQueryState.query}`;
-        setComposerQueryState(null);
-      }
-      else if (menu) setMenu(null);
-      else if (historyOpen) setHistoryOpen(false);
-      else {
-        restorePersistedConversationFromDraft();
-        setPanelOpen(false);
-      }
+      restorePersistedConversationFromDraft();
+      setPanelOpen(false);
     }
     document.addEventListener("keydown", closeWithEscape, true);
     return () => document.removeEventListener("keydown", closeWithEscape, true);
-  }, [composerQueryState, dangerConfirmOpen, draftOrigin, historyOpen, menu, panelOpen, threads]);
+  }, [draftOrigin, panelOpen, threads]);
 
   const visibleComposerCandidates = useMemo(() => {
     const candidates = composerCandidates?.candidates.filter((candidate) => (
@@ -2097,6 +2096,7 @@ export function AiChat({
       await deleteAiChatThread(thread.id);
       const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
       setThreads(remainingThreads);
+      if (remainingThreads.length === 0) setHistoryOpen(false);
       if (selectedThreadRef.current === thread.id) {
         setSnapshot(null);
         setDraftOrigin(null);

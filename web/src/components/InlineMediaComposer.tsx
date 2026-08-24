@@ -17,7 +17,6 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type {
-  Attachment,
   ComposerCandidate,
   ComposerCandidatesResponse,
   ComposerSurface,
@@ -56,6 +55,7 @@ interface InlineImageSegment {
   token: string;
   file: File;
   dataUrl: string | null;
+  dataUrlReady: Promise<void>;
 }
 
 interface PersistedImageSegment {
@@ -72,7 +72,6 @@ interface IssueReferenceSegment {
   markdown: string;
   identifier: string;
   projectId: string;
-  issueIdentifier: string;
   taskId: string | null;
 }
 
@@ -163,7 +162,7 @@ function completionSelectionId(selection: CompletionSelection): string {
 let segmentSequence = 0;
 const inlineMediaMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 const EMPTY_MENTION_TASKS: readonly Task[] = [];
-const INLINE_MEDIA_CLIPBOARD_MIME = "application/x-taskboard-inline-media";
+const EMPTY_TEXT_CARET = "\uFEFF";
 const INLINE_MEDIA_HTML_BLOCKS = new Set([
   "ADDRESS",
   "BLOCKQUOTE",
@@ -180,7 +179,6 @@ const INLINE_MEDIA_HTML_BLOCKS = new Set([
   "PRE",
   "UL",
 ]);
-let inlineMediaClipboard: { id: string; segments: InlineMediaSegment[] } | null = null;
 
 function segmentId(prefix: string): string {
   segmentSequence += 1;
@@ -199,11 +197,16 @@ function imageSegment(file: File, dataUrl: string | null = null): InlineImageSeg
     token: `<!--taskboard-inline-image:${id}-->`,
     file,
     dataUrl,
+    dataUrlReady: Promise.resolve(),
   };
   if (!dataUrl) {
     const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") segment.dataUrl = reader.result;
+    segment.dataUrlReady = new Promise((resolve, reject) => {
+      reader.addEventListener("load", () => {
+        segment.dataUrl = reader.result as string;
+        resolve();
+      });
+      reader.addEventListener("error", () => reject(reader.error));
     });
     reader.readAsDataURL(file);
   }
@@ -212,8 +215,6 @@ function imageSegment(file: File, dataUrl: string | null = null): InlineImageSeg
 
 const COMPOSER_REFERENCE_URL = /^taskboard:\/\/composer-reference\/v1\/(skill|agent)\/([A-Za-z0-9_-]+)$/;
 const COMPOSER_REFERENCE_NAMESPACE_URL = /^taskboard:\/\/composer-reference\/([^/]+)\/([^/]+)\/([A-Za-z0-9_-]+)$/;
-const ISSUE_COMPOSER_REFERENCE_URL = /^taskboard:\/\/composer-reference\/v1\/issue\/([A-Za-z0-9_-]+)$/;
-const IMAGE_COMPOSER_REFERENCE_URL = /^taskboard:\/\/composer-reference\/v1\/image\/([A-Za-z0-9_-]+)$/;
 const PENDING_IMAGE_COMPOSER_REFERENCE_URL = /^taskboard:\/\/composer-reference\/v1\/pending-image\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/;
 
 function encodedComposerReferenceKey(value: string): string {
@@ -241,31 +242,6 @@ function base64UrlReferenceKey(
 ): string | null {
   const decoded = decodedComposerReferenceKey(value);
   return decoded && (!requireNfc || decoded === decoded.normalize("NFC")) ? value : null;
-}
-
-function issueComposerReference(url: string) {
-  const match = ISSUE_COMPOSER_REFERENCE_URL.exec(url);
-  const value = match ? decodedComposerReferenceKey(match[1]) : null;
-  if (!value) return null;
-  const route = new URLSearchParams(value);
-  const projectId = route.get("project")?.trim();
-  const identifier = readIssueIdentifier(value);
-  return projectId && identifier ? { projectId, identifier } : null;
-}
-
-function attachmentIdFromUrl(url: string): string | null {
-  try {
-    const path = new URL(url, "http://taskboard.local").pathname;
-    return path.match(/\/api\/attachments\/([A-Za-z0-9_-]+)\/content$/)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function imageComposerReference(url: string): string | null {
-  const match = IMAGE_COMPOSER_REFERENCE_URL.exec(url);
-  const attachmentId = match ? decodedComposerReferenceKey(match[1]) : null;
-  return attachmentId && /^[A-Za-z0-9_-]+$/.test(attachmentId) ? attachmentId : null;
 }
 
 function pendingImageComposerReference(
@@ -361,9 +337,7 @@ export function createInlineMediaSegments(
         end: number;
         identifier: string;
         projectId: string;
-        issueIdentifier: string;
         taskId: string | null;
-        markdown?: string;
       }
     | {
         type: "pending-image";
@@ -392,17 +366,12 @@ export function createInlineMediaSegments(
           ...pendingImage,
         });
       } else {
-        const attachmentId = imageComposerReference(node.url!);
-        const url = attachmentId ? `api/attachments/${attachmentId}/content` : node.url!;
         items.push({
           type: "persisted-image",
           start: node.position.start.offset,
           end: node.position.end.offset,
           alt,
-          url,
-          markdown: attachmentId
-            ? `![${alt.replace(/[\\[\]]/g, "\\$&")}](${url})`
-            : undefined,
+          url: node.url!,
         });
       }
     }
@@ -420,11 +389,10 @@ export function createInlineMediaSegments(
     }
     let handledIssueReference = false;
     if (node.type === "link" && node.url) {
-      const stableIssue = issueComposerReference(node.url);
-      const projectId = stableIssue?.projectId
-        ?? (node.url.startsWith("?") ? new URLSearchParams(node.url).get("project") : null);
-      const identifier = stableIssue?.identifier
-        ?? (node.url.startsWith("?") ? readIssueIdentifier(node.url) : null);
+      const projectId = node.url.startsWith("?")
+        ? new URLSearchParams(node.url).get("project")
+        : null;
+      const identifier = node.url.startsWith("?") ? readIssueIdentifier(node.url) : null;
       const task = projectId && identifier
         ? referenceTasks.find((candidate) => (
             candidate.projectId === projectId && candidate.identifier === identifier
@@ -437,11 +405,7 @@ export function createInlineMediaSegments(
           end: node.position.end.offset,
           identifier: task?.externalKey ?? identifier,
           projectId,
-          issueIdentifier: identifier,
           taskId: task?.id ?? null,
-          markdown: stableIssue
-            ? `[@${task?.externalKey ?? identifier}](?${new URLSearchParams({ project: projectId, issue: identifier })})`
-            : undefined,
         });
         handledIssueReference = true;
       }
@@ -470,10 +434,9 @@ export function createInlineMediaSegments(
       segments.push({
         id: segmentId("issue"),
         type: "issue-reference",
-        markdown: item.markdown ?? text.slice(item.start, item.end),
+        markdown: text.slice(item.start, item.end),
         identifier: item.identifier,
         projectId: item.projectId,
-        issueIdentifier: item.issueIdentifier,
         taskId: item.taskId,
       });
     } else if (item.type === "unsupported-reference") {
@@ -535,7 +498,7 @@ export function serializeInlineMedia(segments: InlineMediaSegment[]): string {
 export function resolveInlineMediaMarkdown(
   value: string,
   images: PendingInlineImage[],
-  attachments: Attachment[],
+  attachments: Array<{ id: string }>,
 ): string {
   return images.reduce((markdown, image, index) => {
     const attachment = attachments[index];
@@ -646,98 +609,14 @@ function selfContainedClipboardSegments(
   });
 }
 
-function stableClipboardSegments(
-  segments: InlineMediaSegment[],
-): InlineMediaSegment[] {
-  return segments.map((segment) => {
-    if (segment.type === "issue-reference") {
-      const route = new URLSearchParams({
-        project: segment.projectId,
-        issue: segment.issueIdentifier,
-      });
-      const referenceKey = encodedComposerReferenceKey(route.toString());
-      return {
-        ...segment,
-        markdown: `[@${segment.identifier}](taskboard://composer-reference/v1/issue/${referenceKey})`,
-      };
-    }
-    if (segment.type === "persisted-image") {
-      const attachmentId = attachmentIdFromUrl(segment.url);
-      if (!attachmentId) return segment;
-      const alt = segment.alt.replace(/[\\[\]]/g, "\\$&");
-      const referenceKey = encodedComposerReferenceKey(attachmentId);
-      return {
-        ...segment,
-        markdown: `![${alt}](taskboard://composer-reference/v1/image/${referenceKey})`,
-      };
-    }
-    return segment;
-  });
-}
-
-function inlineMediaClipboardHtml(
-  segments: InlineMediaSegment[],
-  clipboardId: string,
-  ownerDocument: Document,
-): string {
-  const wrapper = ownerDocument.createElement("div");
-  wrapper.dataset.taskboardInlineMediaClipboard = clipboardId;
-
-  for (const segment of segments) {
-    if (segment.type === "text") {
-      const text = ownerDocument.createElement("span");
-      text.style.whiteSpace = "pre-wrap";
-      text.textContent = segment.text;
-      wrapper.append(text);
-      continue;
-    }
-    if (isInlineReference(segment) || segment.type === "persisted-image") {
-      const markdown = ownerDocument.createElement("span");
-      markdown.dataset.taskboardInlineMediaMarkdown = segment.markdown;
-      markdown.textContent = segment.markdown;
-      wrapper.append(markdown);
-      continue;
-    }
-    if (segment.dataUrl) {
-      const pendingImage = ownerDocument.createElement("img");
-      pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
-      pendingImage.src = segment.dataUrl;
-      pendingImage.alt = segment.file.name;
-      wrapper.append(pendingImage);
-    } else {
-      const pendingImage = ownerDocument.createElement("span");
-      pendingImage.dataset.taskboardInlineMediaPendingImage = segment.id;
-      pendingImage.textContent = segment.file.name;
-      wrapper.append(pendingImage);
-    }
-  }
-
-  return wrapper.outerHTML;
-}
-
 export function writeInlineMediaClipboard(
   clipboardData: DataTransfer,
   segments: InlineMediaSegment[],
-  ownerDocument: Document,
 ) {
-  const clipboardId = segmentId("clipboard");
-  const clipboardSegments = selfContainedClipboardSegments(segments);
-  const exportedSegments = stableClipboardSegments(clipboardSegments);
-  inlineMediaClipboard = { id: clipboardId, segments: clipboardSegments };
-  clipboardData.setData(INLINE_MEDIA_CLIPBOARD_MIME, clipboardId);
-  clipboardData.setData("text/plain", inlineMediaClipboardText(exportedSegments));
   clipboardData.setData(
-    "text/html",
-    inlineMediaClipboardHtml(exportedSegments, clipboardId, ownerDocument),
+    "text/plain",
+    inlineMediaClipboardText(selfContainedClipboardSegments(segments)),
   );
-}
-
-function inlineMediaClipboardIdFromHtml(html: string): string {
-  if (!html) return "";
-  const document = new DOMParser().parseFromString(html, "text/html");
-  return document.body
-    .querySelector<HTMLElement>("[data-taskboard-inline-media-clipboard]")
-    ?.dataset.taskboardInlineMediaClipboard ?? "";
 }
 
 export function createInlineMediaSegmentsFromHtml(
@@ -818,23 +697,6 @@ export function createInlineMediaSegmentsFromHtml(
 
   for (const child of document.body.childNodes) visit(child);
   return structured ? createInlineMediaSegments(markdown, referenceTasks) : null;
-}
-
-function cloneInlineMediaSegments(segments: InlineMediaSegment[]): InlineMediaSegment[] {
-  return segments.map((segment) => {
-    if (segment.type === "text") return textSegment(segment.text);
-    if (segment.type === "pending-image") return imageSegment(segment.file, segment.dataUrl);
-    const prefix = segment.type === "persisted-image"
-      ? "image"
-      : segment.type === "issue-reference"
-        ? "issue"
-        : segment.type === "skill-reference"
-          ? "skill"
-          : segment.type === "agent-reference"
-            ? "agent"
-            : "unsupported";
-    return { ...segment, id: segmentId(prefix) };
-  });
 }
 
 function replaceInlineMediaRange(
@@ -983,7 +845,7 @@ function IssueReferenceChip({
       <span className="issue-reference-identity">
         {task && (
           <span className={`status-icon issue-reference-status status-icon-${STATUS_DETAILS[task.status].tone}`}>
-            <StatusIcon status={task.status} size={15} />
+            <StatusIcon status={task.status} color="var(--column-status-color)" size={15} />
           </span>
         )}
         <span className="issue-reference-id">{displayIdentifier}</span>
@@ -1052,6 +914,8 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
   }, ref) {
     const { text } = useTaskboardI18n();
     const rootRef = useRef<HTMLDivElement>(null);
+    const latestSegments = useRef(segments);
+    latestSegments.current = segments;
     const atomHosts = useRef(new Map<string, HTMLElement>());
     const nativeSegments = useRef(new Map<string, InlineMediaSegment>());
     const pendingSelection = useRef<number | null>(null);
@@ -1167,7 +1031,8 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
             element.textContent = segment.text;
             if (segment.text.endsWith("\n")) element.append(document.createElement("br"));
           } else {
-            element.append(document.createTextNode(""), document.createElement("br"));
+            element.dataset.inlineMediaEmptyText = "true";
+            element.append(document.createTextNode(EMPTY_TEXT_CARET), document.createElement("br"));
           }
         } else {
           element.className = isInlineReference(segment)
@@ -1378,7 +1243,11 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       const range = document.createRange();
       range.selectNodeContents(element);
       range.setEnd(node, offset);
-      return start + range.toString().length;
+      return start + (
+        element.dataset.inlineMediaEmptyText === "true"
+          ? 0
+          : range.toString().length
+      );
     }
 
     function currentLogicalRange(): { start: number; end: number } | null {
@@ -1508,14 +1377,25 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       applyRangeReplacement(start, start + segmentLength(segments[index]), [], false);
     }
 
+    function completionRangeFromCaret(caretRange: Range, triggerLength: number): Range | null {
+      const root = rootRef.current;
+      if (!root || !caretRange.collapsed || !root.contains(caretRange.startContainer)) return null;
+      const textNode = caretRange.startContainer;
+      if (!(textNode instanceof Text) || caretRange.startOffset < triggerLength) return null;
+      const range = document.createRange();
+      const triggerOffset = caretRange.startOffset - triggerLength;
+      range.setStart(textNode, triggerOffset);
+      range.setEnd(textNode, triggerOffset + 1);
+      return range;
+    }
+
     function completionAnchorRect(query: ComposerQuery): DOMRect {
-      const element = elementForSegment(query.segmentId);
-      const textNode = element?.firstChild;
-      if (!element || !(textNode instanceof Text)) return query.anchorRect;
-      const anchorRange = document.createRange();
-      anchorRange.setStart(textNode, Math.min(query.start, textNode.length));
-      anchorRange.collapse(true);
-      return anchorRange.getBoundingClientRect();
+      const root = rootRef.current;
+      const selection = window.getSelection();
+      if (!root || !selection || selection.rangeCount === 0) return query.anchorRect;
+      const caretRange = selection.getRangeAt(0);
+      return completionRangeFromCaret(caretRange, query.end - query.start)
+        ?.getBoundingClientRect() ?? query.anchorRect;
     }
 
     function updateCompletionFromSelection() {
@@ -1583,13 +1463,10 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         return;
       }
       const start = prefix.lastIndexOf(trigger);
-      const anchorRange = document.createRange();
-      const element = elementForSegment(segment.id);
-      const textNode = element?.firstChild;
-      if (textNode instanceof Text) {
-        anchorRange.setStart(textNode, Math.min(start, textNode.length));
-        anchorRange.collapse(true);
-      } else {
+      const triggerLength = end - start;
+      let anchorRange = completionRangeFromCaret(range, triggerLength);
+      if (!anchorRange) {
+        anchorRange = range.cloneRange();
         anchorRange.setStart(range.startContainer, range.startOffset);
         anchorRange.collapse(true);
       }
@@ -1625,7 +1502,6 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
           markdown: `[@${displayIdentifier}](?${route})`,
           identifier: displayIdentifier,
           projectId: task.projectId,
-          issueIdentifier: task.identifier,
           taskId: task.id,
         };
         applyRangeReplacement(
@@ -1727,12 +1603,12 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       const targetRange = input.getTargetRanges()[0];
       if (!targetRange) return;
       const root = rootRef.current;
-      const start = logicalOffsetForPoint(
+      let start = logicalOffsetForPoint(
         targetRange.startContainer,
         targetRange.startOffset,
         "start",
       );
-      const end = logicalOffsetForPoint(
+      let end = logicalOffsetForPoint(
         targetRange.endContainer,
         targetRange.endOffset,
         "end",
@@ -1740,6 +1616,30 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       if (start === null || end === null) return;
       const startElement = segmentElement(targetRange.startContainer);
       const endElement = segmentElement(targetRange.endContainer);
+      let backwardImageDelete = false;
+      const caretRange = input.inputType === "deleteContentBackward"
+        ? currentLogicalRange()
+        : null;
+      if (
+        input.inputType === "deleteContentBackward"
+        && caretRange
+        && caretRange.start === caretRange.end
+      ) {
+        let offset = 0;
+        for (const segment of segments) {
+          const nextOffset = offset + segmentLength(segment);
+          if (
+            nextOffset === caretRange.start
+            && (segment.type === "pending-image" || segment.type === "persisted-image")
+          ) {
+            start = offset;
+            end = nextOffset;
+            backwardImageDelete = true;
+            break;
+          }
+          offset = nextOffset;
+        }
+      }
       const directText = directRootTextSegment();
       const directTextTarget = Boolean(
         root
@@ -1754,15 +1654,17 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       const sameTextSegment = targetSegment?.type === "text"
         && (directTextTarget || startElement === endElement);
       const fullDelete = start === 0 && end > start && end === segmentsLength(segments);
-      const nativeTextEdit = (
-        sameTextSegment
-        && (
+      const nativeTextEdit = !backwardImageDelete && (
+        (
+          sameTextSegment
+          && (
+            input.inputType.startsWith("delete")
+            || ["insertText", "insertReplacementText"].includes(input.inputType)
+          )
+        ) || (
           input.inputType.startsWith("delete")
-          || ["insertText", "insertReplacementText"].includes(input.inputType)
+          && fullDelete
         )
-      ) || (
-        input.inputType.startsWith("delete")
-        && fullDelete
       );
       if (nativeTextEdit) return;
       let insertion: InlineMediaSegment[] | null = null;
@@ -1778,26 +1680,39 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       applyRangeReplacement(start, end, insertion);
     }
 
-    function copyContent(event: ClipboardEvent<HTMLDivElement>): {
+    async function copyContent(event: ClipboardEvent<HTMLDivElement>): Promise<{
       range: { start: number; end: number };
       segments: InlineMediaSegment[];
-    } | null {
-      const selection = event.currentTarget.ownerDocument.getSelection();
+    } | null> {
+      const currentTarget = event.currentTarget;
+      const ownerDocument = currentTarget.ownerDocument;
+      const selection = ownerDocument.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
       const selectedRange = selection.getRangeAt(0);
       if (
-        !event.currentTarget.contains(selectedRange.startContainer)
-        || !event.currentTarget.contains(selectedRange.endContainer)
+        !currentTarget.contains(selectedRange.startContainer)
+        || !currentTarget.contains(selectedRange.endContainer)
       ) return null;
       const range = currentLogicalRange();
       if (!range || range.start === range.end) return null;
       const copiedSegments = inlineMediaRangeSegments(segments, range.start, range.end);
       event.preventDefault();
-      writeInlineMediaClipboard(
-        event.clipboardData,
-        copiedSegments,
-        event.currentTarget.ownerDocument,
-      );
+      const pendingImages = copiedSegments.filter((segment): segment is InlineImageSegment => (
+        segment.type === "pending-image"
+      ));
+      if (pendingImages.length > 0) {
+        await Promise.all(copiedSegments.flatMap((segment) => (
+          segment.type === "pending-image" ? [segment.dataUrlReady] : []
+        )));
+        await navigator.clipboard.writeText(inlineMediaClipboardText(
+          selfContainedClipboardSegments(copiedSegments),
+        ));
+      } else {
+        writeInlineMediaClipboard(
+          event.clipboardData,
+          copiedSegments,
+        );
+      }
       return { range, segments: copiedSegments };
     }
 
@@ -1805,31 +1720,6 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       const range = currentLogicalRange();
       if (!range) return;
       const clipboardHtml = event.clipboardData.getData("text/html");
-      const clipboardId = event.clipboardData.getData(INLINE_MEDIA_CLIPBOARD_MIME)
-        || inlineMediaClipboardIdFromHtml(clipboardHtml);
-      if (clipboardId && inlineMediaClipboard?.id === clipboardId) {
-        event.preventDefault();
-        applyRangeReplacement(
-          range.start,
-          range.end,
-          cloneInlineMediaSegments(inlineMediaClipboard.segments),
-          false,
-        );
-        return;
-      }
-      const taskboardHtml = clipboardId
-        || clipboardHtml.includes("data-taskboard-inline-media-markdown");
-      const pendingImageHtml = clipboardHtml.includes(
-        "data-taskboard-inline-media-pending-image",
-      );
-      if (taskboardHtml && !pendingImageHtml) {
-        const htmlSegments = createInlineMediaSegmentsFromHtml(clipboardHtml, referenceTasks);
-        if (htmlSegments) {
-          event.preventDefault();
-          applyRangeReplacement(range.start, range.end, htmlSegments, false);
-          return;
-        }
-      }
       const clipboardFiles = clipboardImages(event.clipboardData);
       if (clipboardFiles.length > 0) {
         event.preventDefault();
@@ -1843,9 +1733,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         );
         return;
       }
-      const htmlSegments = pendingImageHtml
-        ? null
-        : createInlineMediaSegmentsFromHtml(clipboardHtml, referenceTasks);
+      const htmlSegments = createInlineMediaSegmentsFromHtml(clipboardHtml, referenceTasks);
       if (htmlSegments) {
         event.preventDefault();
         applyRangeReplacement(range.start, range.end, htmlSegments, false);
@@ -1902,7 +1790,21 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         const id = child.dataset.inlineMediaSegment;
         const segment = id ? existing.get(id) : null;
         if (segment?.type === "text") {
-          next.push({ ...segment, text: child.textContent ?? "" });
+          let text = child.textContent ?? "";
+          if (child.dataset.inlineMediaEmptyText) {
+            const textNode = child.firstChild;
+            const placeholderOffset = textNode instanceof Text
+              ? textNode.data.indexOf(EMPTY_TEXT_CARET)
+              : -1;
+            text = text.replace(EMPTY_TEXT_CARET, "");
+            if (text) {
+              if (textNode instanceof Text && placeholderOffset >= 0) {
+                textNode.deleteData(placeholderOffset, 1);
+              }
+              delete child.dataset.inlineMediaEmptyText;
+            }
+          }
+          next.push({ ...segment, text });
         } else if (segment) {
           next.push(segment);
           nextAtomHosts.set(segment.id, child);
@@ -1986,7 +1888,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
           }}
           onCompositionEnd={(event) => {
             composing.current = false;
-            if (isEmpty && !event.currentTarget.textContent) {
+            if (isEmpty && !event.currentTarget.textContent?.replace(EMPTY_TEXT_CARET, "")) {
               event.currentTarget.dataset.empty = "true";
             }
             syncSegmentsFromDom();
@@ -1996,21 +1898,36 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
           onPaste={pasteContent}
           onCopy={copyContent}
           onCut={(event) => {
-            const copied = copyContent(event);
-            if (!copied) return;
-            const image = copied.segments.find((segment): segment is InlineImageSegment => (
-              segment.type === "pending-image" && segment.file.type === "image/png"
-            ));
-            if (image) {
-              const plainText = event.clipboardData.getData("text/plain");
-              const html = event.clipboardData.getData("text/html");
-              void navigator.clipboard.write([new ClipboardItem({
-                "image/png": image.file,
-                "text/html": new Blob([html], { type: "text/html" }),
-                "text/plain": new Blob([plainText], { type: "text/plain" }),
-              })]);
-            }
-            applyRangeReplacement(copied.range.start, copied.range.end, [], false);
+            void copyContent(event).then((copied) => {
+              if (!copied) return;
+              const currentSegments = latestSegments.current;
+              const currentCut = inlineMediaRangeSegments(
+                currentSegments,
+                copied.range.start,
+                copied.range.end,
+              );
+              const unchanged = currentCut.length === copied.segments.length
+                && currentCut.every((segment, index) => {
+                  const snapshot = copied.segments[index];
+                  return segment.id === snapshot.id
+                    && segment.type === snapshot.type
+                    && (
+                      segment.type !== "text"
+                      || (snapshot.type === "text" && segment.text === snapshot.text)
+                    );
+                });
+              if (!unchanged) return;
+              const replacement = replaceInlineMediaRange(
+                currentSegments,
+                copied.range.start,
+                copied.range.end,
+                [],
+              );
+              pendingSelection.current = replacement.caret;
+              pendingMentionUpdate.current = false;
+              setCompletionQuery(null);
+              onChange(replacement.segments);
+            });
           }}
           onKeyUp={(event) => {
             if (event.key !== "Escape") updateCompletionFromSelection();

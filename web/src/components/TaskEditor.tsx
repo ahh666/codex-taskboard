@@ -25,7 +25,6 @@ import {
   assigneeTargetForActor,
 } from "../actors";
 import { ActorAvatar } from "./ActorAvatar";
-import { STATUS_DETAILS } from "./BoardColumn";
 import { LabelPicker } from "./LabelPicker";
 import { IssuePickerContent } from "./IssueRelations";
 import { LinearIcon } from "./LinearIcon";
@@ -611,8 +610,7 @@ export function TaskEditor({
               options={TASK_STATUSES.map((value) => ({
                 value,
                 label: taskStatusLabel(language, value),
-                icon: <StatusIcon status={value} size={14} />,
-                className: `status-icon-${STATUS_DETAILS[value].tone}`,
+                icon: <StatusIcon status={value} color="currentColor" size={14} />,
               }))}
               open={menu === "status"}
               triggerClassName="property-control property-status"

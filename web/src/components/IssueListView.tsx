@@ -70,7 +70,7 @@ export function IssueListView({
             <section className={`issue-list-group status-${status}`} key={status}>
               <button className="issue-list-group-header" type="button" onClick={() => toggleStatus(status)} aria-expanded={!isCollapsed}>
                 <LinearIcon name={isCollapsed ? "chevronRight" : "chevronDown"} />
-                <span className="issue-list-status-icon"><StatusIcon status={status} size={14} /></span>
+                <span className="issue-list-status-icon"><StatusIcon status={status} color="currentColor" size={14} /></span>
                 <strong>{statusLabel}</strong>
                 <span>{statusTasks.length}</span>
               </button>

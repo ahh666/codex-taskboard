@@ -1,5 +1,4 @@
 import path from "node:path";
-import { isSupportedModelEffort } from "./taskboard-automation-options.mjs";
 
 const AUTOMATION_OPERATIONS = new Set(["ensure-active", "pause", "list", "apply-policy"]);
 const INTERVAL_MINUTES = new Set([5, 10, 15, 30, 60]);
@@ -60,7 +59,7 @@ export function parseTaskboardAutomationHostRequest(value) {
     || (codexProjectKind === "local" && remoteProjects.length > 0)
   ) return null;
   if (!INTERVAL_MINUTES.has(value.intervalMinutes)) return null;
-  if (!isSupportedModelEffort(value.model, value.reasoningEffort)) return null;
+  if (!validText(value.model, 256) || !validText(value.reasoningEffort, 100)) return null;
   if (value.automationId !== undefined && !validText(value.automationId, 256)) return null;
   if (typeof value.enabledByUser !== "boolean" || typeof value.quotaAware !== "boolean") return null;
 
@@ -219,7 +218,8 @@ function sanitizeAutomation(item) {
   if (
     !validText(item?.id, 256)
     || (item.status !== "ACTIVE" && item.status !== "PAUSED")
-    || !isSupportedModelEffort(item.model, item.reasoningEffort)
+    || !validText(item.model, 256)
+    || !validText(item.reasoningEffort, 100)
     || !validRrule(item.rrule)
   ) return null;
   return {

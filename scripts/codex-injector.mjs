@@ -3,6 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -33,7 +34,9 @@ const projectRoot = path.resolve(path.dirname(injectorPath), "..");
 const defaultCodexDebuggingPort = 9229;
 const independentCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_PROFILE)
-  : "/private/tmp/codex-taskboard-independent-profile-v2";
+  : process.platform === "linux"
+    ? path.join(os.tmpdir(), "codex-taskboard-independent-profile-v2")
+    : "/private/tmp/codex-taskboard-independent-profile-v2";
 const sourceCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE)
   : null;
@@ -113,7 +116,7 @@ function parseArgs(argv) {
     startupToken: null,
     daemon: false,
     screenshot: null,
-    appPath: "/Applications/ChatGPT.app",
+    appPath: process.platform === "linux" ? "/usr/bin/chatgpt" : "/Applications/ChatGPT.app",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -140,6 +143,8 @@ function parseArgs(argv) {
     else if (arg === "--app-path") options.appPath = path.resolve(argv[++index]);
     else throw new Error(`Unknown option: ${arg}`);
   }
+
+  if (process.platform === "linux" && options.launch) options.cdpPipe = true;
 
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error("--port must be an integer between 1 and 65535");
@@ -293,7 +298,10 @@ async function importCodexBrowserProfile() {
 }
 
 function codexExecutablePath(appPath) {
-  if (process.platform === "win32") return appPath;
+  if (process.platform === "linux") {
+    return appPath === "/usr/bin/chatgpt" ? "/usr/lib/chatgpt/ChatGPT" : appPath;
+  }
+  if (process.platform !== "darwin") return appPath;
   return path.join(
     appPath,
     "Contents",
@@ -373,7 +381,6 @@ async function launchCodexWithLaunchServices(appPath, port, shouldStop = () => f
   const launcher = spawn(
     "/usr/bin/open",
     [
-      "-n",
       "-a",
       appPath,
       "--args",
@@ -884,7 +891,9 @@ async function loadTaskboardFrameViaCdp(cdp, frameName, frameCapability) {
 async function openWithDefaultApplication(target) {
   await new Promise((resolve, reject) => {
     const child = spawn(
-      process.platform === "win32" ? "explorer.exe" : "/usr/bin/open",
+      process.platform === "win32"
+        ? "explorer.exe"
+        : process.platform === "linux" ? "xdg-open" : "/usr/bin/open",
       [target],
       {
         detached: true,
@@ -901,6 +910,10 @@ async function openWithDefaultApplication(target) {
 }
 
 async function revealAttachmentInFinder(attachmentPath, directory) {
+  if (process.platform === "linux") {
+    await openWithDefaultApplication(directory);
+    return;
+  }
   try {
     await new Promise((resolve, reject) => {
       const child = spawn("/usr/bin/open", ["-R", attachmentPath], {

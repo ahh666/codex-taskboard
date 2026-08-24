@@ -18,10 +18,12 @@ import type {
   FeishuConnection,
   FeishuTasklist,
   HostContext,
+  IssueRelationOrigin,
   IssueRelationType,
   JiraConnection,
   Project,
   ProjectReadme,
+  ProjectReadmeAttachment,
   ProjectSummary,
   Task,
   TaskChangeActivity,
@@ -512,6 +514,25 @@ export async function saveProjectReadme(
   return data.readme;
 }
 
+export async function uploadProjectReadmeAttachment(
+  projectId: string,
+  file: File,
+): Promise<ProjectReadmeAttachment> {
+  const data = await request<{ attachment: ProjectReadmeAttachment }>(
+    `/api/projects/${encodeURIComponent(projectId)}/readme/attachments`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Taskboard-Filename": encodeURIComponent(file.name),
+        "X-Taskboard-Attachment-Kind": "inline",
+      },
+      body: file,
+    },
+  );
+  return data.attachment;
+}
+
 export async function createProject(input: {
   id: string;
   name: string;
@@ -670,12 +691,17 @@ export async function addTaskRelation(
   type: IssueRelationType,
   relatedTaskId: string,
   threadId?: string,
+  origin?: IssueRelationOrigin,
 ): Promise<{ task: Task; relatedTask: Task }> {
   return request<{ task: Task; relatedTask: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
     {
       method: "POST",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({
+        version: task.version,
+        ...(origin ? { origin } : {}),
+        ...(threadId ? { threadId } : {}),
+      }),
     },
   );
 }
@@ -685,12 +711,17 @@ export async function removeTaskRelation(
   type: IssueRelationType,
   relatedTaskId: string,
   threadId?: string,
+  origin?: IssueRelationOrigin,
 ): Promise<{ task: Task; relatedTask: Task }> {
   return request<{ task: Task; relatedTask: Task }>(
     `/api/tasks/${encodeURIComponent(task.id)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
     {
       method: "DELETE",
-      body: JSON.stringify({ version: task.version, ...(threadId ? { threadId } : {}) }),
+      body: JSON.stringify({
+        version: task.version,
+        ...(origin ? { origin } : {}),
+        ...(threadId ? { threadId } : {}),
+      }),
     },
   );
 }
@@ -806,7 +837,7 @@ export async function deleteAttachment(attachment: Attachment): Promise<void> {
   });
 }
 
-export function attachmentContentUrl(attachment: Attachment): string {
+export function attachmentContentUrl(attachment: { id: string }): string {
   return `api/attachments/${encodeURIComponent(attachment.id)}/content`;
 }
 

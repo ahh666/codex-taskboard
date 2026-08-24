@@ -40,6 +40,7 @@ interface TaskContextMenuProps {
   onLabelsChange: (task: Task, labels: string[]) => void;
   onDuplicate: (task: Task) => void;
   onCopy: (text: string, announcement: string) => void;
+  openInThreadDisabled?: boolean;
   onOpenInThread: (task: Task) => void;
   onArchive: (task: Task) => void;
 }
@@ -111,6 +112,7 @@ export function TaskContextMenu({
   onLabelsChange,
   onDuplicate,
   onCopy,
+  openInThreadDisabled = false,
   onOpenInThread,
   onArchive,
 }: TaskContextMenuProps) {
@@ -183,7 +185,8 @@ export function TaskContextMenu({
     function closeFromOutside(event: PointerEvent) {
       if (!menuRef.current?.contains(event.target as Node)) onClose();
     }
-    function closeFromViewportChange() {
+    function closeFromViewportChange(event: Event) {
+      if (event.type === "scroll" && menuRef.current?.contains(event.target as Node)) return;
       onClose();
     }
 
@@ -272,7 +275,7 @@ export function TaskContextMenu({
       <div className="context-menu-group">
         <MenuItem
           label={text("状态", "Status")}
-          icon={<StatusIcon status={task.status} />}
+          icon={<StatusIcon status={task.status} color="currentColor" />}
           shortcut="S"
           submenu="status"
           submenuOpen={submenu === "status"}
@@ -287,7 +290,7 @@ export function TaskContextMenu({
                   <MenuItem
                     key={status}
                     label={taskStatusLabel(language, status)}
-                    icon={<StatusIcon status={status} />}
+                    icon={<StatusIcon status={status} color="currentColor" />}
                     shortcut={String(task.source === "feishu" ? ["todo", "done"].indexOf(status) + 1 : index + 1)}
                     checked={task.status === status}
                     onClick={() => closeThen(() => onStatusChange(task, status))}
@@ -428,6 +431,7 @@ export function TaskContextMenu({
         <MenuItem
           label={text("在新对话打开", "Open in new conversation")}
           icon={<RelationIcon color="currentColor" size={16} />}
+          disabled={openInThreadDisabled}
           onPointerEnter={closeSubmenu}
           onClick={() => closeThen(() => onOpenInThread(task))}
         />
