@@ -1,5 +1,6 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -117,6 +118,8 @@ export function resolveFeishuCliPath({ explicitPath, projectRoot = process.cwd()
   if (explicitPath) return path.resolve(explicitPath);
   const binaryName = platform === "win32" ? "lark-cli.exe" : "lark-cli";
   const packagedPath = path.resolve(projectRoot, "..", "bin", binaryName);
+  const developmentPath = path.resolve(projectRoot, "src-tauri", "resources", "bin", binaryName);
+  if (!existsSync(packagedPath) && existsSync(developmentPath)) return developmentPath;
   return packagedPath;
 }
 
