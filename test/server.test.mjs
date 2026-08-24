@@ -584,6 +584,16 @@ test("remote task bindings keep their own identity and can be cleared independen
   assert.deepEqual(created.threadBinding, binding);
   assert.deepEqual(created.conversationRefs.map((ref) => ref.codexHostId), ["ssh-a"]);
 
+  const continued = (await request(baseUrl, `/api/tasks/${created.id}/move`, {
+    method: "POST",
+    body: {
+      version: created.version,
+      status: "in_progress",
+      threadId: binding.threadId,
+    },
+  })).body.task;
+  assert.deepEqual(continued.threadBinding, binding);
+
   const controllerComment = (await request(baseUrl, `/api/tasks/${created.id}/comments`, {
     method: "POST",
     body: { body: "Controller note", threadId: "controller-thread" },
@@ -594,7 +604,7 @@ test("remote task bindings keep their own identity and can be cleared independen
   const blocked = (await request(baseUrl, `/api/tasks/${created.id}/move`, {
     method: "POST",
     body: {
-      version: created.version,
+      version: continued.version,
       status: "blocked",
       threadId: "controller-thread",
       threadBinding: binding,

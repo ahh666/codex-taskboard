@@ -596,6 +596,18 @@ function storedThreadBinding(threadBinding, threadId) {
   ];
 }
 
+function storedThreadBindingForExisting(current, threadBinding, threadId) {
+  const currentBinding = threadBindingFromRow(current);
+  if (
+    threadBinding === undefined
+    && currentBinding
+    && currentBinding.threadId === threadId
+  ) {
+    return storedThreadBinding(currentBinding, threadId);
+  }
+  return storedThreadBinding(threadBinding, threadId);
+}
+
 function attachTaskActivity(task, comments, activities, previewImage = null) {
   const orderedComments = [...comments].sort((left, right) => left.id.localeCompare(right.id));
   const orderedActivities = [...activities].sort((left, right) => left.id.localeCompare(right.id));
@@ -1686,7 +1698,7 @@ async function updateTask(env, id, input, actor) {
     );
     values.push(assignee.type, assignee.id, assignee.name, assignee.avatarUrl);
   }
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
   if (storedBinding && !Object.hasOwn(input.changes, "projectId")) {
     assignments.push(
       "thread_id = ?",
@@ -1841,7 +1853,7 @@ async function moveTask(env, id, input, actor) {
     sortOrder = row.maximum + 1000;
   }
   const timestamp = now();
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -1891,7 +1903,7 @@ async function archiveTask(env, id, input, actor) {
   const current = await requireTaskRow(env, id);
   assertTaskVersion(current, input.version);
   const timestamp = now();
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -1932,7 +1944,7 @@ async function restoreTask(env, id, input, actor) {
     throw new ApiError(409, "TASK_NOT_ARCHIVED", "Only archived tasks can be restored");
   }
   const timestamp = now();
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(current, input.threadBinding, input.threadId);
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2047,7 +2059,7 @@ async function addRelation(env, taskId, type, relatedTaskId, input, actor) {
   );
   const endpoints = relationEndpoints(type, task.id, relatedTask.id);
   const timestamp = now();
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
@@ -2212,7 +2224,7 @@ async function removeRelation(env, taskId, type, relatedTaskId, input, actor) {
     };
   }
   const timestamp = now();
-  const storedBinding = storedThreadBinding(input.threadBinding, input.threadId);
+  const storedBinding = storedThreadBindingForExisting(task, input.threadBinding, input.threadId);
   const threadAssignment = storedBinding
     ? `thread_id = ?, thread_codex_project_id = ?, thread_codex_project_kind = ?,
       thread_codex_host_id = ?, thread_workspace_path = ?,`
