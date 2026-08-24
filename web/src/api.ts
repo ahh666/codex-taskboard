@@ -31,6 +31,7 @@ import type {
   TaskDraft,
   TaskStatus,
 } from "./types";
+import { requestEmbeddedHostApi } from "./embeddedHost.mjs";
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
   type: "user",
@@ -92,7 +93,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
+      const embedded = typeof window !== "undefined"
+        && window.parent !== window
+        && typeof (globalThis as {
+          __CODEX_TASKBOARD_FRAME_CAPABILITY__?: unknown;
+        }).__CODEX_TASKBOARD_FRAME_CAPABILITY__ === "string";
+      if (embedded) {
+        const result = await requestEmbeddedHostApi({
+          path,
+          method,
+          headers: Object.fromEntries(headers.entries()),
+          body: typeof init?.body === "string" ? init.body : null,
+        }, init?.signal ?? undefined);
+        const responseHeaders = new Headers(result.headers ?? {});
+        const body = typeof result.body === "string"
+          ? Uint8Array.from(atob(result.body), (character) => character.charCodeAt(0))
+          : new Uint8Array();
+        response = new Response(body, {
+          status: Number(result.status) || 500,
+          headers: responseHeaders,
+        });
+      } else {
+        response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
+      }
       break;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;

@@ -846,6 +846,99 @@ function findFrameByName(frameTree, frameName) {
   return null;
 }
 
+const taskboardAssetReferencePattern = /["'`](\.\/[^"'`]+?\.(?:js|css))["'`]/g;
+
+function taskboardAssetReferences(source) {
+  const references = new Set();
+  for (const match of source.matchAll(taskboardAssetReferencePattern)) {
+    references.add(match[1]);
+  }
+  return references;
+}
+
+function dataAssetUrl(source, contentType) {
+  return `data:${contentType};base64,${Buffer.from(source).toString("base64")}`;
+}
+
+async function inlineTaskboardAssets(html) {
+  const assets = new Map();
+  const importMap = {};
+  const pending = Array.from(taskboardAssetReferences(html), (reference) => ({
+    reference,
+    baseUrl: taskboardPageUrl,
+  }));
+
+  while (pending.length > 0) {
+    const { reference, baseUrl } = pending.shift();
+    let assetUrl;
+    try {
+      assetUrl = new URL(reference, baseUrl);
+    } catch {
+      continue;
+    }
+    if (assetUrl.origin !== taskboardOrigin || !/\/assets\//.test(assetUrl.pathname)) continue;
+    const assetKey = assetUrl.pathname;
+    if (assets.has(assetKey)) continue;
+    const response = await fetch(assetUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Taskboard asset HTTP ${response.status}`);
+    const contentType = assetUrl.pathname.endsWith(".css")
+      ? "text/css"
+      : "text/javascript";
+    const source = await response.text();
+    assets.set(assetKey, { source, contentType, url: assetUrl });
+    for (const childReference of taskboardAssetReferences(source)) {
+      pending.push({ reference: childReference, baseUrl: assetUrl });
+    }
+  }
+
+  for (const [assetKey, asset] of assets) {
+    if (asset.contentType !== "text/javascript") continue;
+    const relativeReference = `./${assetKey.split("/assets/")[1]}`;
+    importMap[relativeReference] = dataAssetUrl(asset.source, asset.contentType);
+    for (const reference of taskboardAssetReferences(asset.source)) {
+      const childUrl = new URL(reference, asset.url);
+      if (childUrl.origin !== taskboardOrigin) continue;
+      const childAsset = assets.get(childUrl.pathname);
+      if (childAsset?.contentType === "text/javascript") {
+        importMap[reference] = dataAssetUrl(childAsset.source, childAsset.contentType);
+      }
+    }
+  }
+
+  const entryReference = html.match(
+    /<script[^>]*type=["']module["'][^>]*src=["']([^"']+)["'][^>]*><\/script>/i,
+  )?.[1];
+  const stylesheetReference = html.match(
+    /<link[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/i,
+  )?.[1];
+  if (!entryReference || !stylesheetReference) {
+    throw new Error("Taskboard document does not declare its entry assets");
+  }
+  const entryUrl = new URL(entryReference, taskboardPageUrl);
+  const stylesheetUrl = new URL(stylesheetReference, taskboardPageUrl);
+  const entry = assets.get(entryUrl.pathname);
+  const stylesheet = assets.get(stylesheetUrl.pathname);
+  if (!entry || !stylesheet) throw new Error("Taskboard entry assets could not be loaded");
+
+  const safeInline = (source, closingTag) => source.replace(
+    new RegExp(`</${closingTag}`, "gi"),
+    `<\\/${closingTag}`,
+  );
+  const importMapTag = `<script type="importmap">${JSON.stringify({ imports: importMap })}</script>`;
+  return html
+    .replace("<head>", `<head>${importMapTag}`)
+    .replace(
+      /<script[^>]*type=["']module["'][^>]*src=["'][^"']+["'][^>]*><\/script>/i,
+      () => `<script type="module">${safeInline(entry.source, "script")}</script>`,
+    )
+    .replace(
+      /<link[^>]*rel=["']stylesheet["'][^>]*href=["'][^"']+["'][^>]*>/i,
+      () => `<style data-taskboard-inline-css>${safeInline(stylesheet.source, "style")}</style>`,
+    )
+    .replace(/<link[^>]*rel=["']modulepreload["'][^>]*>/gi, "")
+    .replace(/<link[^>]*rel=["']icon["'][^>]*>/gi, "");
+}
+
 async function verifiedTaskboardDocument(frameCapability) {
   const challenge = randomBytes(32).toString("hex");
   const response = await fetch(taskboardPageUrl, {
@@ -861,13 +954,38 @@ async function verifiedTaskboardDocument(frameCapability) {
     .update(challenge)
     .digest("hex");
   if (proof !== expectedProof) throw new Error("Taskboard service identity check failed");
-  const html = await response.text();
+  const html = await inlineTaskboardAssets(await response.text());
   const head = "<head>";
   if (!html.includes(head)) throw new Error("Taskboard document has no head element");
   return html.replace(
     head,
     `${head}<base href=${JSON.stringify(taskboardPageUrl)}><script>globalThis.__CODEX_TASKBOARD_FRAME_CAPABILITY__=${JSON.stringify(frameCapability)};</script>`,
   );
+}
+
+async function proxyTaskboardApi(request) {
+  const targetUrl = new URL(request.path.replace(/^\/+/, ""), taskboardPageUrl);
+  if (targetUrl.origin !== taskboardOrigin || !targetUrl.pathname.startsWith(new URL(taskboardBaseUrl).pathname)) {
+    throw new Error("Taskboard API URL is outside the active instance");
+  }
+  const challenge = randomBytes(32).toString("hex");
+  const headers = new Headers(request.headers);
+  headers.set("origin", "app://-");
+  headers.set("x-codex-taskboard-challenge", challenge);
+  const response = await fetch(targetUrl, {
+    method: request.method.toUpperCase(),
+    headers,
+    body: request.body === null ? undefined : request.body,
+  });
+  const body = Buffer.from(await response.arrayBuffer()).toString("base64");
+  return {
+    requestId: request.requestId,
+    status: response.status,
+    headers: {
+      "content-type": response.headers.get("content-type") ?? "",
+    },
+    body,
+  };
 }
 
 async function loadTaskboardFrameViaCdp(cdp, frameName, frameCapability) {
@@ -1662,6 +1780,7 @@ function installTaskboardHostBinding(cdp, supervisor, startupToken) {
         request.frameName,
         request.frameCapability,
       ),
+      apiRequest: proxyTaskboardApi,
       openExternal: openExternalUrl,
       openAttachment,
       runAutomation: (request) => (
