@@ -1196,6 +1196,33 @@
     } catch (_) {}
   }
 
+  async function handleApiRequest(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    if (!requestId) return;
+    try {
+      const response = await requestHost("api-request", {
+        requestId,
+        path: payload.path,
+        method: payload.method,
+        headers: payload.headers,
+        body: payload.body ?? null,
+      });
+      postToFrame({
+        type: "taskboard:api-response",
+        payload: response,
+      }, true);
+    } catch (error) {
+      postToFrame({
+        type: "taskboard:api-response",
+        payload: {
+          requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }, true);
+    }
+  }
+
   async function handleAttachmentOpen(payload) {
     try {
       await requestHost("open-attachment", {
@@ -1267,6 +1294,10 @@
     }
     if (message.type === "taskboard:open-external") {
       handleExternalOpen(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:api-request") {
+      void handleApiRequest(message.payload);
       return;
     }
     if (message.type === "taskboard:open-attachment") {

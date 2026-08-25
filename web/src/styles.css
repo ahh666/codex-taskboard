@@ -4976,17 +4976,47 @@ kbd {
 
 .feishu-connection-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 16px;
+}
+
+.feishu-authorization-pending {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 14px;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-raised, var(--surface));
+}
+
+.feishu-authorization-qr {
+  display: block;
+  width: 240px;
+  height: 240px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.feishu-connection-help {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .feishu-tasklists {
   display: grid;
   gap: 8px;
+  max-height: min(48vh, 420px);
   margin: 16px 0 0;
+  overflow-y: auto;
   padding: 10px;
   border: var(--border-hairline) solid var(--border-strong);
   border-radius: 6px;
+  overscroll-behavior: contain;
 }
 
 .feishu-tasklists legend {
@@ -4998,9 +5028,96 @@ kbd {
 .feishu-tasklists label {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 8px;
   margin: 0;
   color: var(--text-primary);
+}
+
+.feishu-tasklist-item {
+  display: grid;
+  gap: 6px;
+}
+
+.feishu-tasklist-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.feishu-tasklist-heading label {
+  flex: 1;
+}
+
+.feishu-tasklist-heading label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feishu-tasklist-toggle {
+  flex: none;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.feishu-tasklist-toggle:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.feishu-task-previews {
+  display: grid;
+  gap: 5px;
+  margin: 0 8px 2px 22px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.feishu-task-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.feishu-task-preview > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.feishu-task-preview-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+
+.feishu-task-preview-status.is-complete {
+  border-color: var(--text-tertiary);
+  background: var(--text-tertiary);
+}
+
+.feishu-task-preview-error,
+.feishu-task-preview-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.feishu-task-preview-error {
+  color: var(--danger);
 }
 
 .feishu-tasklists input[type="checkbox"] {

@@ -31,6 +31,7 @@ import {
 } from "./cloud-proxy.mjs";
 import { ApiError, TaskboardDatabase } from "./database.mjs";
 import { createFeishuConfigStore } from "./feishu-config.mjs";
+import { createFeishuCli, resolveFeishuCliPath } from "./feishu-cli.mjs";
 import { createFeishuIntegration } from "./feishu-integration.mjs";
 import { createJiraConfigStore } from "./jira-config.mjs";
 import { createJiraIntegration } from "./jira-integration.mjs";
@@ -110,7 +111,7 @@ function feishuAuthorizationPage({ success }) {
 
 function assertFeishuTaskWriteAvailable(task, operation) {
   if (task?.source === "feishu") {
-    throw new ApiError(409, "FEISHU_FIELD_UNAVAILABLE", `飞书任务暂不支持在 Taskboard ${operation}`);
+    throw new ApiError(409, "FEISHU_FIELD_UNAVAILABLE", `飞书需求暂不支持在 Taskboard ${operation}`);
   }
 }
 
@@ -1614,6 +1615,12 @@ export function resolveServerOptions(options = {}) {
     attachmentsDirectory: options.attachmentsDirectory ?? path.join(dataDirectory, "attachments"),
     cloudConfigPath: options.cloudConfigPath ?? path.join(dataDirectory, "cloud-companion.json"),
     feishuConfigPath: options.feishuConfigPath ?? path.join(dataDirectory, "feishu-connection.json"),
+    feishuCliPath: path.resolve(String(
+      options.feishuCliPath
+        ?? process.env.CODEX_TASKBOARD_MEEGLE_CLI_PATH
+        ?? process.env.CODEX_TASKBOARD_FEISHU_CLI_PATH
+        ?? resolveFeishuCliPath({ projectRoot: PROJECT_ROOT }),
+    )),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
@@ -1697,6 +1704,10 @@ export function createTaskboardServer(options = {}) {
   const feishuConfig = options.feishuConfigStore ?? createFeishuConfigStore({
     configPath: resolved.feishuConfigPath,
   });
+  const feishuCli = options.feishuCli ?? createFeishuCli({
+    executablePath: resolved.feishuCliPath,
+    dataDirectory: resolved.dataDirectory,
+  });
   const jira = createJiraIntegration({
     configStore: jiraConfig,
     database,
@@ -1705,7 +1716,7 @@ export function createTaskboardServer(options = {}) {
   const feishu = createFeishuIntegration({
     configStore: feishuConfig,
     database,
-    fetch: options.feishuFetch ?? globalThis.fetch,
+    cli: feishuCli,
   });
   let hostRuntime = null;
   function currentHostThreadBinding(threadId) {
@@ -2263,22 +2274,7 @@ export function createTaskboardServer(options = {}) {
 
       if (pathname === "/api/local/feishu-connection/callback") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
-        try {
-          assertAllowedQuery(url.searchParams, new Set(["code", "state", "error"]), "飞书授权回调");
-          if (url.searchParams.get("error")) {
-            return sendHtml(response, 400, feishuAuthorizationPage({
-              success: false,
-            }));
-          }
-          const code = stringField(url.searchParams.get("code"), "code", { required: true, maxLength: 4_096 });
-          const state = stringField(url.searchParams.get("state"), "state", { required: true, maxLength: 512 });
-          await feishu.completeAuthorization({ code, state });
-          return sendHtml(response, 200, feishuAuthorizationPage({ success: true }));
-        } catch (error) {
-          return sendHtml(response, 400, feishuAuthorizationPage({
-            success: false,
-          }));
-        }
+        return sendHtml(response, 410, feishuAuthorizationPage({ success: false }));
       }
 
       if (pathname === "/api/local/feishu-connection") {
@@ -2291,18 +2287,9 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["tasklists"]));
-          if (!Array.isArray(body.tasklists) || body.tasklists.length > 100) {
-            throw new ApiError(400, "INVALID_FIELD", "'tasklists' must be an array with at most 100 items");
-          }
-          const tasklists = body.tasklists.map((tasklist) => {
-            assertPlainObject(tasklist);
-            assertAllowedKeys(tasklist, new Set(["guid"]));
-            return {
-              guid: stringField(tasklist.guid, "tasklists.guid", { required: true, maxLength: 256 }),
-            };
-          });
-          const connection = await feishu.saveTasklists(tasklists);
+          assertAllowedKeys(body, new Set(["viewUrl"]));
+          const viewUrl = stringField(body.viewUrl, "viewUrl", { required: true, maxLength: 2_048 });
+          const connection = await feishu.saveView(viewUrl);
           const project = database.getProject(FEISHU_PROJECT_ID);
           if (project) events.emit("project.labels.updated", { project });
           return sendJson(response, 200, { connection });
@@ -2325,22 +2312,10 @@ export function createTaskboardServer(options = {}) {
         }
         const body = await readJson(request);
         assertPlainObject(body);
-        assertAllowedKeys(body, new Set(["appId", "appSecret"]));
-        const appId = stringField(body.appId, "appId", { required: true, maxLength: 256 });
-        const appSecret = stringField(body.appSecret, "appSecret", { required: true, maxLength: 4_096 });
-        const callback = new URL(`http://${request.headers.host ?? "127.0.0.1"}`);
-        if (callback.hostname === "0.0.0.0" || callback.hostname === "::") {
-          callback.hostname = "127.0.0.1";
-        }
-        callback.pathname = `${routePrefix}/api/local/feishu-connection/callback`;
-        callback.search = "";
+        assertAllowedKeys(body, new Set());
         try {
           return sendJson(response, 200, {
-            authorization: await feishu.startAuthorization({
-              appId,
-              appSecret,
-              redirectUri: callback.toString(),
-            }),
+            authorization: await feishu.startAuthorization(),
           });
         } catch (error) {
           if (error instanceof ApiError) throw error;
@@ -2348,14 +2323,13 @@ export function createTaskboardServer(options = {}) {
         }
       }
 
-      if (pathname === "/api/local/feishu-connection/tasklists") {
-        if (request.method === "GET") {
-          if ([...url.searchParams.keys()].length > 0) {
-            throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书任务清单接口不接受查询参数");
-          }
-          return sendJson(response, 200, { tasklists: await feishu.listTasklists() });
+      if (pathname === "/api/local/feishu-connection/cancel") {
+        if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书授权取消接口不接受查询参数");
         }
-        return methodNotAllowed(response, ["GET"]);
+        await assertEmptyRequestBody(request, "POST /api/local/feishu-connection/cancel");
+        return sendJson(response, 200, { connection: await feishu.cancelAuthorization() });
       }
 
       if (pathname === "/api/local/feishu-connection/sync") {
@@ -2821,7 +2795,7 @@ export function createTaskboardServer(options = {}) {
             throw new ApiError(
               409,
               "FEISHU_CREATE_UNAVAILABLE",
-              "请在飞书中创建任务，Taskboard 当前只同步所选任务清单",
+              "请在飞书项目中创建需求，Taskboard 当前只同步需求视图",
             );
           }
           const task = database.createTask({
@@ -3257,7 +3231,7 @@ export function createTaskboardServer(options = {}) {
               throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be updated");
             }
             if (Object.hasOwn(changes, "projectId")) {
-              throw new ApiError(409, "FEISHU_PROJECT_MOVE_UNAVAILABLE", "飞书任务不能移到本地项目");
+              throw new ApiError(409, "FEISHU_PROJECT_MOVE_UNAVAILABLE", "飞书需求不能移到本地项目");
             }
             if (assigneeTarget !== undefined) {
               throw new ApiError(409, "FEISHU_ASSIGNEE_UNAVAILABLE", "请在飞书中修改负责人");
@@ -3274,11 +3248,11 @@ export function createTaskboardServer(options = {}) {
               throw new ApiError(
                 409,
                 "FEISHU_FIELD_UNAVAILABLE",
-                `飞书任务暂不支持在 Taskboard 修改 ${unsupportedField}`,
+                `飞书需求暂不支持在 Taskboard 修改 ${unsupportedField}`,
               );
             }
             if (Object.hasOwn(changes, "status") && !["todo", "done"].includes(changes.status)) {
-              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书任务只能在待办和已完成之间切换");
+              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书需求只能在待办和已完成之间切换");
             }
             feishuChanged = await feishu.updateTask(current, changes);
           }
@@ -3352,7 +3326,7 @@ export function createTaskboardServer(options = {}) {
               throw new ApiError(409, "TASK_ARCHIVED", "Archived tasks cannot be moved");
             }
             if (!["todo", "done"].includes(move.status)) {
-              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书任务只能在待办和已完成之间切换");
+              throw new ApiError(409, "FEISHU_STATUS_UNAVAILABLE", "飞书需求只能在待办和已完成之间切换");
             }
             await feishu.updateTask(current, { status: move.status });
           }
@@ -3596,6 +3570,7 @@ export function createTaskboardServer(options = {}) {
       aiEventResponses.clear();
       await aiChat.close();
       await projectSummary.close();
+      await feishu.close();
       await serverClosed;
       listening = false;
       database.close();

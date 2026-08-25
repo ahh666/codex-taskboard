@@ -39,6 +39,12 @@ export async function initializeTaskboardStorage() {
     localStorageBackend = window.localStorage;
     return;
   } catch {
+    if (
+      window.parent !== window
+      && typeof (globalThis as {
+        __CODEX_TASKBOARD_FRAME_CAPABILITY__?: unknown;
+      }).__CODEX_TASKBOARD_FRAME_CAPABILITY__ === "string"
+    ) return;
     const response = await fetch(new URL("api/client-storage", document.baseURI));
     if (!response.ok) throw new Error(`Taskboard storage returned ${response.status}`);
     const payload = await response.json() as { entries: Record<string, string> };

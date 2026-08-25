@@ -1,50 +1,44 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { useTaskboardI18n } from "../i18n";
-import type { FeishuConnection, FeishuTasklist } from "../types";
+import type { FeishuConnection } from "../types";
 
 interface FeishuConnectionDialogProps {
   connection: FeishuConnection | null;
-  tasklists: FeishuTasklist[];
   saving: boolean;
   error: string | null;
   onClose: () => void;
-  onAuthorize: (input: { appId: string; appSecret: string }) => Promise<void>;
-  onRefreshTasklists: () => Promise<void>;
-  onSaveTasklists: (guids: string[]) => Promise<void>;
+  onAuthorize: () => Promise<void>;
+  onCancelAuthorization: () => Promise<void>;
+  onSaveView: (viewUrl: string) => Promise<void>;
 }
 
 export function FeishuConnectionDialog({
   connection,
-  tasklists,
   saving,
   error,
   onClose,
   onAuthorize,
-  onRefreshTasklists,
-  onSaveTasklists,
+  onCancelAuthorization,
+  onSaveView,
 }: FeishuConnectionDialogProps) {
   const { text } = useTaskboardI18n();
-  const [appId, setAppId] = useState(connection?.appId ?? "");
-  const [appSecret, setAppSecret] = useState("");
-  const [selectedGuids, setSelectedGuids] = useState<Set<string>>(new Set(
-    connection?.tasklists.map((tasklist) => tasklist.guid) ?? [],
-  ));
-  const callbackUri = useMemo(() => new URL(
-    "api/local/feishu-connection/callback",
-    document.baseURI,
-  ).toString(), []);
+  const [viewUrl, setViewUrl] = useState(connection?.viewUrl ?? "");
 
   useEffect(() => {
-    setAppId(connection?.appId ?? "");
-    setAppSecret("");
-    setSelectedGuids(new Set(connection?.tasklists.map((tasklist) => tasklist.guid) ?? []));
-  }, [connection]);
+    setViewUrl(connection?.viewUrl ?? "");
+  }, [connection?.viewUrl]);
 
-  async function saveTasklists(event: FormEvent<HTMLFormElement>) {
+  async function saveView(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onSaveTasklists([...selectedGuids]);
+    await onSaveView(viewUrl.trim());
   }
+
+  const pending = connection?.authorizationState === "pending";
+  const authorized = connection?.authorized === true;
+  const authorizationExpiry = connection?.authorizationExpiresAt
+    ? new Date(connection.authorizationExpiresAt).toLocaleTimeString()
+    : null;
 
   return (
     <div
@@ -58,95 +52,88 @@ export function FeishuConnectionDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="feishu-connection-title"
-        onSubmit={(event) => void saveTasklists(event)}
+        onSubmit={(event) => void saveView(event)}
         onKeyDown={(event) => {
           if (event.key === "Escape" && !saving) onClose();
         }}
       >
         <h2 id="feishu-connection-title">
-          {connection?.configured ? text("飞书任务设置", "Feishu task settings") : text("连接飞书任务", "Connect Feishu tasks")}
+          {connection?.configured ? text("飞书需求设置", "Feishu requirement settings") : text("接入飞书需求", "Connect Feishu requirements")}
         </h2>
-        <label>
-          <span>{text("回调地址", "Redirect URI")}</span>
-          <input readOnly value={callbackUri} onFocus={(event) => event.currentTarget.select()} />
-        </label>
-        <label>
-          <span>{text("App ID", "App ID")}</span>
-          <input
-            required={!connection?.authorized}
-            autoFocus
-            autoComplete="off"
-            maxLength={256}
-            placeholder="cli_xxx"
-            value={appId}
-            onChange={(event) => setAppId(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>{text("App Secret", "App Secret")}</span>
-          <input
-            required={!connection?.authorized}
-            type="password"
-            autoComplete="off"
-            maxLength={4096}
-            placeholder={connection?.authorized ? text("重新授权时填写", "Required to reauthorize") : ""}
-            value={appSecret}
-            onChange={(event) => setAppSecret(event.target.value)}
-          />
-        </label>
-        <div className="feishu-connection-actions">
-          <button
-            className="button secondary"
-            type="button"
-            disabled={saving || !appId.trim() || !appSecret}
-            onClick={() => void onAuthorize({ appId: appId.trim(), appSecret })}
-          >
-            {text("授权飞书", "Authorize Feishu")}
-          </button>
-          <button
-            className="button secondary"
-            type="button"
-            disabled={saving || !connection?.authorized}
-            onClick={() => void onRefreshTasklists()}
-          >
-            {text("刷新任务清单", "Refresh task lists")}
-          </button>
-        </div>
-        {connection?.authorized && (
-          <fieldset className="feishu-tasklists">
-            <legend>{text("同步任务清单", "Task lists to sync")}</legend>
-            {tasklists.length > 0 ? tasklists.map((tasklist) => (
-              <label key={tasklist.guid}>
-                <input
-                  type="checkbox"
-                  checked={selectedGuids.has(tasklist.guid)}
-                  disabled={saving}
-                  onChange={(event) => {
-                    setSelectedGuids((current) => {
-                      const next = new Set(current);
-                      if (event.target.checked) next.add(tasklist.guid);
-                      else next.delete(tasklist.guid);
-                      return next;
-                    });
-                  }}
-                />
-                <span>{tasklist.name}</span>
-              </label>
-            )) : <p>{text("授权完成后刷新任务清单。", "Refresh task lists after authorization.")}</p>}
-          </fieldset>
+        <p className="feishu-connection-help">
+          {!connection?.cliAvailable
+            ? connection?.error ?? text("当前安装包缺少飞书项目登录组件。", "This installation is missing the Feishu Project login component.")
+            : authorized
+              ? text(`已授权${connection?.displayName ? `：${connection.displayName}` : ""}`, `Authorized${connection?.displayName ? `: ${connection.displayName}` : ""}`)
+              : text("点击接入后使用飞书扫码或授权链接登录。", "Click connect to sign in with a Feishu QR code or authorization link.")}
+        </p>
+
+        {pending && (
+          <div className="feishu-authorization-pending">
+            <p className="feishu-connection-help">{text("请打开授权链接完成飞书项目登录；设备码页面支持手机扫码。", "Open the authorization link to sign in; the device-code page supports phone scanning.")}</p>
+            {authorizationExpiry && (
+              <p className="feishu-connection-help">
+                {text(`授权有效期至 ${authorizationExpiry}`, `Authorization expires at ${authorizationExpiry}`)}
+              </p>
+            )}
+            <div className="feishu-connection-actions">
+              {connection.authorizationUrl && (
+                <a className="button secondary" href={connection.authorizationUrl} target="_blank" rel="noreferrer">
+                  {text("打开飞书授权页", "Open Feishu authorization")}
+                </a>
+              )}
+              <button className="button secondary" type="button" disabled={saving} onClick={() => void onAuthorize()}>
+                {text("重新生成授权链接", "Regenerate authorization link")}
+              </button>
+              <button className="button secondary" type="button" disabled={saving} onClick={() => void onCancelAuthorization()}>
+                {text("取消授权", "Cancel authorization")}
+              </button>
+            </div>
+          </div>
         )}
+
+        {!pending && !authorized && (
+          <div className="feishu-connection-actions">
+            <button className="button primary" type="button" disabled={saving || !connection?.authorizationReady} onClick={() => void onAuthorize()}>
+              {text("接入飞书", "Connect Feishu")}
+            </button>
+          </div>
+        )}
+
+        {authorized && (
+          <>
+            <div className="feishu-connection-actions">
+              <button className="button secondary" type="button" disabled={saving} onClick={() => void onAuthorize()}>
+                {text("重新登录授权", "Reauthorize Feishu")}
+              </button>
+            </div>
+            <label className="feishu-connection-field">
+              <span>{text("需求视图 URL", "Requirement view URL")}</span>
+              <input
+                type="url"
+                value={viewUrl}
+                onChange={(event) => setViewUrl(event.target.value)}
+                placeholder="https://project.feishu.cn/空间/storyView/视图ID"
+                disabled={saving}
+                required
+              />
+            </label>
+            <p className="feishu-connection-help">
+              {text("保存后会同步该视图中的需求工作项，点击需求可查看详细内容。", "Saving syncs requirement work items from this view. Click a requirement to view its details.")}
+            </p>
+          </>
+        )}
+
         {error && <p className="project-dialog-error" role="alert">{error}</p>}
         <div>
           <button className="button secondary" type="button" disabled={saving} onClick={onClose}>
             {text("取消", "Cancel")}
           </button>
-          <button
-            className="button primary"
-            type="submit"
-            disabled={saving || !connection?.authorized || selectedGuids.size === 0}
-          >
-            {saving ? text("同步中…", "Syncing…") : text("保存并同步", "Save and sync")}
-          </button>
+          {authorized && (
+            <button className="button primary" type="submit" disabled={saving || !viewUrl.trim()}>
+              {saving ? text("同步中…", "Syncing…") : text("保存并同步", "Save and sync")}
+            </button>
+          )}
         </div>
       </form>
     </div>

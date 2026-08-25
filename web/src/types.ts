@@ -448,20 +448,21 @@ export interface JiraConnection {
   insecureHttp: boolean;
 }
 
-export interface FeishuTasklist {
-  guid: string;
-  name: string;
-  url: string | null;
-}
-
 export interface FeishuConnection {
   configured: boolean;
+  cliAvailable: boolean;
   authorized: boolean;
-  appId: string | null;
-  scopes: string[];
-  tasklists: FeishuTasklist[];
+  authorizationReady: boolean;
+  authorizationState: "idle" | "pending" | "authorized" | "failed";
+  authorizationUrl: string | null;
+  authorizationQrCode: string | null;
+  authorizationExpiresAt: string | null;
+  displayName: string | null;
+  viewUrl: string | null;
+  viewId: string | null;
   projectId: string;
   lastSyncedAt: string | null;
+  error: string | null;
 }
 
 export interface Comment {
