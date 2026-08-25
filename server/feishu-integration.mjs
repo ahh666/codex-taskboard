@@ -32,33 +32,45 @@ function readableValue(value) {
   return "";
 }
 
+function workItemAttribute(item) {
+  return item?.work_item_attribute ?? item?.workItemAttribute ?? item ?? {};
+}
+
 function fieldMap(item) {
   const result = new Map();
-  if (Array.isArray(item?.fields)) {
-    for (const field of item.fields) {
+  const fields = item?.fields ?? item?.work_item_fields ?? item?.workItemFields;
+  if (Array.isArray(fields)) {
+    for (const field of fields) {
       const key = limitedString(field?.field_key ?? field?.key ?? field?.api_name, "", 256);
       const name = limitedString(field?.field_name ?? field?.name, "", 256);
       const value = field?.field_value ?? field?.value;
       if (key) result.set(key, value);
       if (name) result.set(name, value);
     }
-  } else if (item?.fields && typeof item.fields === "object") {
-    for (const [key, value] of Object.entries(item.fields)) result.set(key, value);
+  } else if (fields && typeof fields === "object") {
+    for (const [key, value] of Object.entries(fields)) result.set(key, value);
   }
   return result;
 }
 
 function fieldValue(item, fields, ...keys) {
+  const attribute = workItemAttribute(item);
   for (const key of keys) {
     if (item?.[key] !== undefined && item[key] !== null) return item[key];
+    if (attribute?.[key] !== undefined && attribute[key] !== null) return attribute[key];
     if (fields.has(key)) return fields.get(key);
   }
   return null;
 }
 
 function workItemId(item) {
+  const attribute = workItemAttribute(item);
   return limitedString(
-    item?.work_item_id ?? item?.workItemId ?? item?.work_item_info?.work_item_id ?? item?.id,
+    item?.work_item_id
+      ?? item?.workItemId
+      ?? item?.work_item_info?.work_item_id
+      ?? attribute?.work_item_id
+      ?? item?.id,
     "",
     256,
   );
@@ -116,6 +128,7 @@ function actorFromValue(value, fallback) {
 function normalizeWorkItem(item, view, index) {
   const id = workItemId(item);
   if (!id) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书项目返回的需求缺少工作项 ID");
+  const attribute = workItemAttribute(item);
   const fields = fieldMap(item);
   const title = readableValue(fieldValue(
     item,
@@ -123,9 +136,11 @@ function normalizeWorkItem(item, view, index) {
     "name",
     "work_item_name",
     "需求名称",
-  )) || readableValue(item?.work_item_info?.work_item_name) || "未命名需求";
+  )) || readableValue(item?.work_item_info?.work_item_name)
+    || readableValue(attribute?.work_item_name) || "未命名需求";
   const statusValue = fieldValue(item, fields, "work_item_status", "status", "状态")
-    ?? item?.state_info?.end_state_key_name;
+    ?? item?.state_info?.end_state_key_name
+    ?? attribute?.work_item_status;
   const priorityValue = fieldValue(item, fields, "priority", "优先级");
   const creatorValue = fieldValue(item, fields, "created_by", "creator", "创建人");
   const assigneeValue = fieldValue(
@@ -162,8 +177,8 @@ function normalizeWorkItem(item, view, index) {
     externalId: id,
     externalKey: id,
     externalUrl: `https://${view.host}/${view.simpleName}/${view.workItemType}/detail/${encodeURIComponent(id)}`,
-    createdAt: timestampToIso(fieldValue(item, fields, "created_at", "createdAt", "创建时间")),
-    updatedAt: timestampToIso(fieldValue(item, fields, "updated_at", "updatedAt", "更新时间")),
+    createdAt: timestampToIso(fieldValue(item, fields, "created_at", "createdAt", "创建时间") ?? attribute?.create_time),
+    updatedAt: timestampToIso(fieldValue(item, fields, "updated_at", "updatedAt", "更新时间") ?? attribute?.update_time),
   };
 }
 

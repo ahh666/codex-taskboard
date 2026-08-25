@@ -72,7 +72,7 @@ function normalizeAuthorization(payload) {
 function recordArray(payload) {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== "object") return [];
-  for (const key of ["results", "work_items", "items", "list", "records", "data"]) {
+  for (const key of ["results", "work_items", "work_item_list", "items", "list", "records", "data"]) {
     if (Array.isArray(payload[key])) return payload[key];
     if (payload[key] && typeof payload[key] === "object") {
       const nested = recordArray(payload[key]);
@@ -87,6 +87,7 @@ function workItemId(record) {
     record?.work_item_id
       ?? record?.workItemId
       ?? record?.work_item_info?.work_item_id
+      ?? record?.work_item_attribute?.work_item_id
       ?? record?.id
       ?? "",
   ));
