@@ -4,6 +4,12 @@ import { ApiError } from "./database.mjs";
 const SYNC_INTERVAL_MS = 60_000;
 const DETAIL_REQUEST_INTERVAL_MS = 100;
 
+function isTasklistPermissionError(error) {
+  return error instanceof ApiError
+    && error.code === "FEISHU_CLI_COMMAND_FAILED"
+    && Number(error.details?.cliError?.code) === 1470403;
+}
+
 function limitedString(value, fallback, maxLength) {
   const result = String(value ?? fallback).trim();
   return (result || fallback).slice(0, maxLength);
@@ -106,7 +112,10 @@ export function createFeishuIntegration({ configStore, database, cli }) {
     return status;
   }
 
-  async function syncWithConfig(config, { archiveMissing = true } = {}) {
+  async function syncWithConfig(
+    config,
+    { archiveMissing = true, summariesByGuid = new Map() } = {},
+  ) {
     if (config.tasklists.length === 0) {
       database.syncFeishuTasks([], { archiveMissing, projectName: "飞书任务" });
       lastSyncedAt = new Date().toISOString();
@@ -114,7 +123,9 @@ export function createFeishuIntegration({ configStore, database, cli }) {
     }
     const tasklistNames = new Map();
     for (const tasklist of config.tasklists) {
-      const summaries = await cli.listTasklistTasks(tasklist.guid);
+      const summaries = summariesByGuid.has(tasklist.guid)
+        ? summariesByGuid.get(tasklist.guid)
+        : await cli.listTasklistTasks(tasklist.guid);
       for (const summary of summaries) {
         if (typeof summary?.guid !== "string") continue;
         const names = tasklistNames.get(summary.guid) ?? new Set();
@@ -159,8 +170,32 @@ export function createFeishuIntegration({ configStore, database, cli }) {
       if (selected.length !== input.length) {
         throw new ApiError(409, "FEISHU_TASKLIST_UNAVAILABLE", "所选飞书任务清单已不可访问，请刷新清单后重试");
       }
-      const savedConfig = await configStore.save({ version: 2, tasklists: selected });
-      return syncWithConfig(savedConfig);
+      const readable = [];
+      const skipped = [];
+      const summariesByGuid = new Map();
+      for (const tasklist of selected) {
+        try {
+          summariesByGuid.set(tasklist.guid, await cli.listTasklistTasks(tasklist.guid));
+          readable.push(tasklist);
+        } catch (error) {
+          if (!isTasklistPermissionError(error)) throw error;
+          skipped.push(tasklist);
+        }
+      }
+      if (selected.length > 0 && readable.length === 0) {
+        throw new ApiError(
+          409,
+          "FEISHU_TASKLIST_PERMISSION_REQUIRED",
+          "所选飞书任务清单均无权读取任务，请先在飞书中将当前账号加入清单后重试",
+          { tasklists: skipped.map(({ guid, name }) => ({ guid, name })) },
+        );
+      }
+      const savedConfig = await configStore.save({ version: 2, tasklists: readable });
+      const connection = await syncWithConfig(savedConfig, { summariesByGuid });
+      if (skipped.length > 0) {
+        connection.skippedTasklists = skipped.map(({ guid, name }) => ({ guid, name }));
+      }
+      return connection;
     },
     async sync({ force = false } = {}) {
       const config = await readConfig();

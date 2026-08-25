@@ -3217,7 +3217,13 @@ export function App() {
       setFeishuDialogOpen(false);
       changeProject(connection.projectId);
       await refreshTasks(connection.projectId);
-      setAnnouncement(text("飞书任务已同步", "Feishu tasks synced"));
+      const skippedNames = connection.skippedTasklists?.map((tasklist) => tasklist.name).filter(Boolean) ?? [];
+      setAnnouncement(skippedNames.length > 0
+        ? text(
+          `飞书任务已同步，已跳过无权读取的清单：${skippedNames.join("、")}`,
+          `Feishu tasks synced. Skipped task lists without read access: ${skippedNames.join(", ")}`,
+        )
+        : text("飞书任务已同步", "Feishu tasks synced"));
     } catch (error) {
       setFeishuError(errorMessage(error));
     } finally {

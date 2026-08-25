@@ -30,6 +30,21 @@ function parseJson(stdout, fallbackMessage) {
   }
 }
 
+function parseCliErrorOutput(output) {
+  const trimmed = String(output ?? "").trim();
+  if (!trimmed) return null;
+  const candidates = [trimmed];
+  const jsonStart = trimmed.indexOf("{");
+  if (jsonStart > 0) candidates.push(trimmed.slice(jsonStart));
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate);
+      if (value?.error) return value;
+    } catch {}
+  }
+  return null;
+}
+
 function dataEnvelope(value) {
   if (value && typeof value === "object" && !Array.isArray(value) && value.data !== undefined) {
     return value.data;
@@ -218,13 +233,27 @@ export function createFeishuCli({
   async function runJson(args, options = {}) {
     const result = await run(args, options);
     if (result.code !== 0) {
-      const parsed = (() => {
-        try { return JSON.parse(result.stdout); } catch { return null; }
-      })();
-      const message = textValue(parsed?.error?.message, "飞书 CLI 操作失败");
+      const parsed = [result.stderr, result.stdout]
+        .map(parseCliErrorOutput)
+        .find(Boolean) ?? null;
+      const cliDetails = parsed?.error && typeof parsed.error === "object"
+        ? {
+          code: parsed.error.code ?? null,
+          type: textValue(parsed.error.type, "") || null,
+          subtype: textValue(parsed.error.subtype, "") || null,
+          missingScopes: Array.isArray(parsed.error.missing_scopes)
+            ? parsed.error.missing_scopes.filter((scope) => typeof scope === "string")
+            : [],
+        }
+        : null;
+      const message = textValue(
+        parsed?.error?.message,
+        textValue(parsed?.msg, "飞书 CLI 操作失败"),
+      );
       throw cliError("FEISHU_CLI_COMMAND_FAILED", message, {
         exitCode: result.code,
         signal: result.signal,
+        cliError: cliDetails,
       });
     }
     return parseJson(result.stdout, "飞书 CLI 返回了无效的 JSON 数据");

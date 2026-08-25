@@ -468,6 +468,7 @@ export interface FeishuConnection {
   displayName: string | null;
   scopes: string[];
   tasklists: FeishuTasklist[];
+  skippedTasklists?: FeishuTasklist[];
   projectId: string;
   lastSyncedAt: string | null;
   error: string | null;
