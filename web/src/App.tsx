@@ -3495,8 +3495,8 @@ export function App() {
                 type="button"
                 disabled={feishuSyncing}
                 onClick={() => void syncFeishuNow()}
-                aria-label={text("同步飞书任务", "Sync Feishu tasks")}
-                title={text("同步飞书任务", "Sync Feishu tasks")}
+                aria-label={text("同步飞书需求", "Sync Feishu requirements")}
+                title={text("同步飞书需求", "Sync Feishu requirements")}
               >
                 <RecurrenceIcon color="currentColor" size={16} />
               </button>
