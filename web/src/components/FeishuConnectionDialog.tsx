@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useTaskboardI18n } from "../i18n";
-import type { FeishuConnection, FeishuTasklist } from "../types";
+import type { FeishuConnection, FeishuTaskPreview, FeishuTasklist } from "../types";
 
 interface FeishuConnectionDialogProps {
   connection: FeishuConnection | null;
@@ -12,7 +12,15 @@ interface FeishuConnectionDialogProps {
   onAuthorize: () => Promise<void>;
   onCancelAuthorization: () => Promise<void>;
   onRefreshTasklists: () => Promise<void>;
+  onLoadTasklistTasks: (guid: string) => Promise<FeishuTaskPreview[]>;
   onSaveTasklists: (guids: string[]) => Promise<void>;
+}
+
+interface TaskPreviewState {
+  expanded: boolean;
+  loading: boolean;
+  tasks: FeishuTaskPreview[];
+  error: string | null;
 }
 
 export function FeishuConnectionDialog({
@@ -24,16 +32,58 @@ export function FeishuConnectionDialog({
   onAuthorize,
   onCancelAuthorization,
   onRefreshTasklists,
+  onLoadTasklistTasks,
   onSaveTasklists,
 }: FeishuConnectionDialogProps) {
   const { text } = useTaskboardI18n();
   const [selectedGuids, setSelectedGuids] = useState<Set<string>>(new Set(
     connection?.tasklists.map((tasklist) => tasklist.guid) ?? [],
   ));
+  const [taskPreviews, setTaskPreviews] = useState<Record<string, TaskPreviewState>>({});
 
   useEffect(() => {
     setSelectedGuids(new Set(connection?.tasklists.map((tasklist) => tasklist.guid) ?? []));
   }, [connection]);
+
+  async function toggleTaskPreview(guid: string) {
+    const current = taskPreviews[guid];
+    if (current?.loading) return;
+    if (current?.tasks.length || current?.error) {
+      setTaskPreviews((states) => ({
+        ...states,
+        [guid]: { ...current, expanded: !current.expanded },
+      }));
+      return;
+    }
+    setTaskPreviews((states) => ({
+      ...states,
+      [guid]: { expanded: true, loading: true, tasks: [], error: null },
+    }));
+    try {
+      const tasks = await onLoadTasklistTasks(guid);
+      setTaskPreviews((states) => ({
+        ...states,
+        [guid]: { expanded: true, loading: false, tasks, error: null },
+      }));
+    } catch (error) {
+      setTaskPreviews((states) => ({
+        ...states,
+        [guid]: {
+          expanded: true,
+          loading: false,
+          tasks: [],
+          error: error instanceof Error ? error.message : text("需求加载失败", "Failed to load requirements"),
+        },
+      }));
+    }
+  }
+
+  useEffect(() => {
+    const initialGuids = connection?.tasklists.map((tasklist) => tasklist.guid) ?? [];
+    initialGuids.forEach((guid) => { void toggleTaskPreview(guid); });
+    // The dialog mounts once per connection session; load the selected lists once on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function saveTasklists(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -154,24 +204,58 @@ export function FeishuConnectionDialog({
             </div>
             <fieldset className="feishu-tasklists">
               <legend>{text("同步任务清单", "Task lists to sync")}</legend>
-              {tasklists.length > 0 ? tasklists.map((tasklist) => (
-                <label key={tasklist.guid}>
-                  <input
-                    type="checkbox"
-                    checked={selectedGuids.has(tasklist.guid)}
-                    disabled={saving}
-                    onChange={(event) => {
-                      setSelectedGuids((current) => {
-                        const next = new Set(current);
-                        if (event.target.checked) next.add(tasklist.guid);
-                        else next.delete(tasklist.guid);
-                        return next;
-                      });
-                    }}
-                  />
-                  <span>{tasklist.name}</span>
-                </label>
-              )) : <p>{text("暂无可同步的任务清单。", "No task lists are available to sync.")}</p>}
+              {tasklists.length > 0 ? tasklists.map((tasklist) => {
+                const preview = taskPreviews[tasklist.guid];
+                return (
+                  <div className="feishu-tasklist-item" key={tasklist.guid}>
+                    <div className="feishu-tasklist-heading">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedGuids.has(tasklist.guid)}
+                          disabled={saving}
+                          onChange={(event) => {
+                            setSelectedGuids((current) => {
+                              const next = new Set(current);
+                              if (event.target.checked) next.add(tasklist.guid);
+                              else next.delete(tasklist.guid);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>{tasklist.name}</span>
+                      </label>
+                      <button
+                        className="feishu-tasklist-toggle"
+                        type="button"
+                        disabled={saving || preview?.loading === true}
+                        aria-expanded={preview?.expanded === true}
+                        onClick={() => void toggleTaskPreview(tasklist.guid)}
+                      >
+                        {preview?.loading
+                          ? text("读取中…", "Loading…")
+                          : preview?.expanded
+                            ? text("收起需求", "Hide requirements")
+                            : text("查看需求", "View requirements")}
+                      </button>
+                    </div>
+                    {preview?.expanded && (
+                      <div className="feishu-task-previews">
+                        {preview.error
+                          ? <p className="feishu-task-preview-error">{preview.error}</p>
+                          : preview.tasks.length > 0
+                            ? preview.tasks.map((task) => (
+                              <div className="feishu-task-preview" key={task.guid}>
+                                <span className={`feishu-task-preview-status${task.completed ? " is-complete" : ""}`} aria-hidden="true" />
+                                <span>{task.summary}</span>
+                              </div>
+                            ))
+                            : <p className="feishu-task-preview-empty">{text("暂无需求", "No requirements")}</p>}
+                      </div>
+                    )}
+                  </div>
+                );
+              }) : <p>{text("暂无可同步的任务清单。", "No task lists are available to sync.")}</p>}
             </fieldset>
           </>
         )}

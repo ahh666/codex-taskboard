@@ -2308,6 +2308,26 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET"]);
       }
 
+      const feishuTasklistTasksRoute = pathname.match(
+        /^\/api\/local\/feishu-connection\/tasklists\/([^/]+)\/tasks$/,
+      );
+      if (feishuTasklistTasksRoute) {
+        if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书需求接口不接受查询参数");
+        }
+        let guid;
+        try {
+          guid = decodeURIComponent(feishuTasklistTasksRoute[1]);
+        } catch {
+          throw new ApiError(400, "INVALID_PATH", "飞书任务清单 GUID 格式无效");
+        }
+        if (!/^[a-z0-9-]{1,256}$/i.test(guid)) {
+          throw new ApiError(400, "INVALID_PATH", "飞书任务清单 GUID 格式无效");
+        }
+        return sendJson(response, 200, { tasks: await feishu.listTasklistTasks(guid) });
+      }
+
       if (pathname === "/api/local/feishu-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
         if ([...url.searchParams.keys()].length > 0) {

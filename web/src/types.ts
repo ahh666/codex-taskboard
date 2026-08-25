@@ -455,6 +455,12 @@ export interface FeishuTasklist {
   url: string | null;
 }
 
+export interface FeishuTaskPreview {
+  guid: string;
+  summary: string;
+  completed: boolean;
+}
+
 export interface FeishuConnection {
   configured: boolean;
   cliAvailable: boolean;

@@ -16,6 +16,7 @@ import type {
   CodexThreadBinding,
   DevelopmentScan,
   FeishuConnection,
+  FeishuTaskPreview,
   FeishuTasklist,
   HostContext,
   IssueRelationOrigin,
@@ -258,6 +259,13 @@ export async function cancelFeishuAuthorization(): Promise<FeishuConnection> {
 export async function listFeishuTasklists(): Promise<FeishuTasklist[]> {
   const data = await request<{ tasklists: FeishuTasklist[] }>("/api/local/feishu-connection/tasklists");
   return data.tasklists;
+}
+
+export async function listFeishuTasklistTasks(guid: string): Promise<FeishuTaskPreview[]> {
+  const data = await request<{ tasks: FeishuTaskPreview[] }>(
+    `/api/local/feishu-connection/tasklists/${encodeURIComponent(guid)}/tasks`,
+  );
+  return data.tasks;
 }
 
 export async function saveFeishuTasklists(guids: string[]): Promise<FeishuConnection> {

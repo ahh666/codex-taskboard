@@ -4731,9 +4731,96 @@ kbd {
 .feishu-tasklists label {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 8px;
   margin: 0;
   color: var(--text-primary);
+}
+
+.feishu-tasklist-item {
+  display: grid;
+  gap: 6px;
+}
+
+.feishu-tasklist-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.feishu-tasklist-heading label {
+  flex: 1;
+}
+
+.feishu-tasklist-heading label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feishu-tasklist-toggle {
+  flex: none;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.feishu-tasklist-toggle:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.feishu-task-previews {
+  display: grid;
+  gap: 5px;
+  margin: 0 8px 2px 22px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.feishu-task-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.feishu-task-preview > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.feishu-task-preview-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+
+.feishu-task-preview-status.is-complete {
+  border-color: var(--text-tertiary);
+  background: var(--text-tertiary);
+}
+
+.feishu-task-preview-error,
+.feishu-task-preview-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.feishu-task-preview-error {
+  color: var(--danger);
 }
 
 .feishu-tasklists input[type="checkbox"] {

@@ -35,6 +35,7 @@ import {
   listDevelopmentContexts,
   listDeviceWorkspaces,
   listFeishuTasklists,
+  listFeishuTasklistTasks,
   listProjects,
   listTasks,
   moveTask as moveTaskRequest,
@@ -3963,6 +3964,7 @@ export function App() {
           onAuthorize={authorizeFeishu}
           onCancelAuthorization={cancelFeishu}
           onRefreshTasklists={refreshFeishuTasklists}
+          onLoadTasklistTasks={listFeishuTasklistTasks}
           onSaveTasklists={saveFeishuTasklistSelection}
         />
       )}

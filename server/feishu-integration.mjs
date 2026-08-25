@@ -15,6 +15,16 @@ function limitedString(value, fallback, maxLength) {
   return (result || fallback).slice(0, maxLength);
 }
 
+function normalizeTaskPreview(summary) {
+  const guid = limitedString(summary?.guid, "", 256);
+  if (!guid) return null;
+  return {
+    guid,
+    summary: limitedString(summary?.summary, "未命名需求", 240),
+    completed: Number(summary?.completed_at) > 0,
+  };
+}
+
 function timestampToIso(value) {
   const milliseconds = Number(value);
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return new Date().toISOString();
@@ -161,6 +171,24 @@ export function createFeishuIntegration({ configStore, database, cli }) {
     async listTasklists() {
       await requireAuthorized();
       return cli.listTasklists();
+    },
+    async listTasklistTasks(guid) {
+      await requireAuthorized();
+      try {
+        return (await cli.listTasklistTasks(guid)).flatMap((summary) => {
+          const preview = normalizeTaskPreview(summary);
+          return preview ? [preview] : [];
+        });
+      } catch (error) {
+        if (isTasklistPermissionError(error)) {
+          throw new ApiError(
+            403,
+            "FEISHU_TASKLIST_PERMISSION_REQUIRED",
+            "当前账号无权读取此任务清单中的需求",
+          );
+        }
+        throw error;
+      }
     },
     async saveTasklists(input) {
       await requireAuthorized();
