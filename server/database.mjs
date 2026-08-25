@@ -430,11 +430,9 @@ function aiChatEventFromRow(row) {
 function projectPrefix(project) {
   const idPrefix = project.id.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12) || "TASK";
   const existingPrefix = project.first_identifier?.replace(/-\d+$/, "");
-  if (existingPrefix && existingPrefix !== idPrefix) return existingPrefix;
+  if (existingPrefix && /^[A-Z0-9]+$/i.test(existingPrefix) && existingPrefix !== idPrefix) return existingPrefix;
   if (idPrefix.length <= 5) return idPrefix;
-  const namePrefix = [...project.name.toUpperCase().replace(/[^\p{L}\p{N}]+/gu, "")]
-    .slice(0, 3)
-    .join("");
+  const namePrefix = project.name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 3);
   return namePrefix || idPrefix.slice(0, 3);
 }
 
