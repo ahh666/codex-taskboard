@@ -10,7 +10,17 @@ function limitedString(value, fallback, maxLength) {
 
 function readableValue(value) {
   if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value.trim();
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const nested = readableValue(parsed);
+        if (nested) return nested;
+      } catch {}
+    }
+    return trimmed;
+  }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map(readableValue).filter(Boolean).join("、");
   if (typeof value === "object") {
