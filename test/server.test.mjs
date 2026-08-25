@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
+import { WebSocket, WebSocketServer } from "ws";
 
-import { createTaskboardServer } from "../server/index.mjs";
+import { createTaskboardServer, resolveServerOptions } from "../server/index.mjs";
 
 const runningApps = [];
 
@@ -47,10 +48,10 @@ async function request(baseUrl, pathname, options = {}) {
   };
 }
 
-async function requestWithHost(baseUrl, host) {
+async function requestWithHost(baseUrl, host, headers = {}) {
   const target = new URL("/health", baseUrl);
   return new Promise((resolve, reject) => {
-    const outgoing = httpRequest(target, { headers: { host } }, (response) => {
+    const outgoing = httpRequest(target, { headers: { host, ...headers } }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({
@@ -60,6 +61,34 @@ async function requestWithHost(baseUrl, host) {
     });
     outgoing.on("error", reject);
     outgoing.end();
+  });
+}
+
+async function openEventStream(baseUrl, headers) {
+  const target = new URL("/api/events", baseUrl);
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest(target, { headers }, (response) => {
+      resolve({ status: response.statusCode });
+      response.resume();
+      response.destroy();
+    });
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+async function openWebSocket(url, headers) {
+  return new Promise((resolve, reject) => {
+    const client = new WebSocket(url, { headers });
+    client.once("open", () => {
+      client.terminate();
+      resolve(101);
+    });
+    client.once("unexpected-response", (_request, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    client.once("error", reject);
   });
 }
 
@@ -419,6 +448,189 @@ test("accepts private LAN requests and rejects public Host and Origin headers", 
   });
   assert.equal(originResult.response.status, 403);
   assert.equal(originResult.body.error.code, "INVALID_ORIGIN");
+});
+
+test("trusted HTTPS origins allow a loopback reverse tunnel for HTTP and SSE only", async () => {
+  const trustedOrigin = "https://board.example.test";
+  const baseUrl = await startServer(() => ({
+    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+  }));
+  const host = "127.0.0.1";
+
+  for (const [origin, expectedStatus] of [
+    [trustedOrigin, 200],
+    ["https://other.example.test", 403],
+    [undefined, 200],
+  ]) {
+    const headers = origin ? { origin } : {};
+    const health = await requestWithHost(baseUrl, host, headers);
+    assert.equal(health.status, expectedStatus);
+
+    const events = await openEventStream(baseUrl, { host, ...headers });
+    assert.equal(events.status, expectedStatus);
+  }
+
+  const publicHost = await requestWithHost(baseUrl, "board.example.test", {
+    origin: trustedOrigin,
+  });
+  assert.equal(publicHost.status, 403);
+  assert.equal(publicHost.body.error.code, "INVALID_HOST");
+
+  const forwardedHost = await requestWithHost(baseUrl, "untrusted.example.test", {
+    origin: trustedOrigin,
+    "x-forwarded-host": host,
+    "x-forwarded-proto": "https",
+  });
+  assert.equal(forwardedHost.status, 403);
+  assert.equal(forwardedHost.body.error.code, "INVALID_HOST");
+});
+
+test("trusted HTTPS origins do not inherit device-local capabilities from tunnel loopback", async () => {
+  const trustedOrigin = "https://board.example.test";
+  let skillPath;
+  const baseUrl = await startServer(async (directory) => {
+    skillPath = path.join(directory, "skills", "manage-taskboard", "SKILL.md");
+    return {
+      skillPath,
+      processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+      cloudConfigStore: {
+        async read() {
+          return {
+            remoteUrl: "https://tasks.example.test",
+            actorName: "Test actor",
+            sharedKey: "test-shared-key",
+            projectMappings: {},
+          };
+        },
+      },
+      remoteFetch: async () => new Response(JSON.stringify({ projects: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    };
+  });
+  const trustedRequest = { headers: { origin: trustedOrigin } };
+
+  const projects = await request(baseUrl, "/api/projects", trustedRequest);
+  assert.equal(projects.response.status, 200);
+  assert.deepEqual(projects.body, { projects: [] });
+
+  const metadata = await request(baseUrl, "/api/meta", trustedRequest);
+  assert.equal(metadata.response.status, 200);
+  assert.deepEqual(metadata.body, {
+    capabilities: { localAiChat: false },
+    mode: "cloud",
+    realtime: {
+      transport: "websocket",
+      endpoint: "/api/events",
+    },
+    localCapabilities: { available: false },
+  });
+  assert.equal(Object.hasOwn(metadata.body, "manageTaskboardSkillPath"), false);
+
+  for (const pathname of [
+    "/api/local/host-runtime",
+    "/api/local/jira-connection",
+    "/api/local/ai/catalog?projectId=local",
+    "/api/device-workspaces",
+    "/api/projects/local/development-contexts",
+  ]) {
+    const result = await request(baseUrl, pathname, trustedRequest);
+    assert.equal(result.response.status, 409, pathname);
+    assert.equal(result.body.error.code, "LOCAL_COMPANION_REQUIRED", pathname);
+  }
+
+  const localMetadata = await request(baseUrl, "/api/meta");
+  assert.equal(localMetadata.response.status, 200);
+  assert.deepEqual(localMetadata.body, {
+    manageTaskboardSkillPath: skillPath,
+    capabilities: { localAiChat: true },
+    mode: "cloud",
+    realtime: {
+      transport: "websocket",
+      endpoint: "/api/events",
+    },
+    localCapabilities: { available: true },
+  });
+  assert.equal((await request(baseUrl, "/api/local/host-runtime")).response.status, 200);
+  assert.equal((await request(baseUrl, "/api/device-workspaces")).response.status, 200);
+});
+
+test("trusted HTTPS origins apply to cloud WebSocket upgrades without widening loopback routes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-trusted-origins-"));
+  const trustedOrigin = "https://board.example.test";
+  const upstreamServer = createServer();
+  const upstreamWebSockets = new WebSocketServer({ noServer: true });
+  upstreamServer.on("upgrade", (request, socket, head) => {
+    upstreamWebSockets.handleUpgrade(request, socket, head, () => {});
+  });
+  await new Promise((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+  const upstreamAddress = upstreamServer.address();
+  const app = createTaskboardServer({
+    dataDirectory: directory,
+    processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: trustedOrigin },
+    cloudConfigStore: {
+      async read() {
+        return {
+          remoteUrl: `http://127.0.0.1:${upstreamAddress.port}`,
+          actorName: "Test actor",
+          sharedKey: "test-shared-key",
+        };
+      },
+    },
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+
+  try {
+    const url = `ws://127.0.0.1:${address.port}/api/events`;
+    for (const [origin, expectedStatus] of [
+      [trustedOrigin, 101],
+      ["https://other.example.test", 403],
+      [undefined, 101],
+    ]) {
+      const headers = { host: "127.0.0.1", ...(origin ? { origin } : {}) };
+      assert.equal(await openWebSocket(url, headers), expectedStatus);
+    }
+  } finally {
+    await app.close();
+    upstreamWebSockets.close();
+    await new Promise((resolve) => upstreamServer.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("trusted origin configuration rejects non-origin URLs", () => {
+  const valid = resolveServerOptions({
+    processEnv: {
+      ...process.env,
+      CODEX_TASKBOARD_TRUSTED_ORIGINS: "https://board.example.test, https://second.example.test/",
+    },
+  });
+  assert.deepEqual(valid.trustedOrigins, new Set([
+    "https://board.example.test",
+    "https://second.example.test",
+  ]));
+
+  for (const value of [
+    "",
+    " \t ",
+    "http://board.example.test",
+    "https://board.example.test/path",
+    "https://board.example.test?query=value",
+    "https://user@board.example.test",
+    "https://*.example.test",
+    "https://board.example.test,,https://second.example.test",
+    "https://board.example.test,https://board.example.test",
+    "https://board.example.test,https://board.example.test/",
+    "https://board.example.test,https://board.example.test:443",
+  ]) {
+    assert.throws(
+      () => resolveServerOptions({
+        processEnv: { ...process.env, CODEX_TASKBOARD_TRUSTED_ORIGINS: value },
+      }),
+      /CODEX_TASKBOARD_TRUSTED_ORIGINS/,
+    );
+  }
 });
 
 test("project and task CRUD flow", async () => {

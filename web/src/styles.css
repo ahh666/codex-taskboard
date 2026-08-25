@@ -2901,6 +2901,10 @@ kbd {
   margin: 0 0 10px;
 }
 
+.issue-description-document .markdown-blank-line {
+  height: 1lh;
+}
+
 .issue-description-document h1,
 .issue-description-document h2,
 .issue-description-document h3,
@@ -3166,6 +3170,10 @@ kbd {
   margin: 10px 0;
   border-radius: 8px;
   object-fit: contain;
+}
+
+.issue-description-document img[src*="/api/attachments/"] + br {
+  display: none;
 }
 
 .issue-conversation-list {
@@ -3603,6 +3611,10 @@ kbd {
 
 .issue-attachment-controls .attachment-add-button {
   margin-left: auto;
+}
+
+.issue-attachment-controls {
+  margin-top: 18px;
 }
 
 .attachments-heading > div {
@@ -4531,13 +4543,6 @@ kbd {
 .detail-open-thread-action svg {
   width: 16px;
   height: 16px;
-}
-
-.detail-thread-avatar {
-  width: 16px;
-  height: 16px;
-  border: 0;
-  font-size: 7px;
 }
 
 .detail-copy-action {
@@ -6097,6 +6102,14 @@ kbd {
   width: 207px;
   max-height: min(402px, calc(100vh - 16px));
   padding: 6px;
+}
+
+.development-context-popover {
+  width: min(360px, calc(100vw - 16px));
+}
+
+.development-context-popover .task-property-option {
+  min-height: 32px;
 }
 
 .task-property-options {
