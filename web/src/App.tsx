@@ -3791,7 +3791,6 @@ export function App() {
             tasks={filteredTasks}
             presentations={taskPresentations}
             currentUser={currentUser}
-            feishuRequirements={isFeishuProject}
             hasActiveFilters={hasActiveTaskFilters}
             onOpenTask={openTaskDetail}
             onOpenConversation={openTaskConversation}

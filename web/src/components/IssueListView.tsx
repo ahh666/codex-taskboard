@@ -17,7 +17,6 @@ interface IssueListViewProps {
   tasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   currentUser: ActorIdentity;
-  feishuRequirements?: boolean;
   hasActiveFilters: boolean;
   onOpenTask: (task: Task) => void;
   onOpenConversation: (conversation: TaskCardPresentation["conversations"][number]) => void;
@@ -38,7 +37,6 @@ export function IssueListView({
   tasks,
   presentations,
   currentUser,
-  feishuRequirements = false,
   hasActiveFilters,
   onOpenTask,
   onOpenConversation,
@@ -59,42 +57,6 @@ export function IssueListView({
       else next.add(status);
       return next;
     });
-  }
-
-  if (feishuRequirements) {
-    return (
-      <div className="issue-list-view feishu-requirements-view" ref={scrollRef}>
-        <div className="feishu-requirements-list">
-          <div className="feishu-requirements-header">{text("需求名称", "Requirement name")}</div>
-          {tasks.length > 0 ? tasks.map((task) => (
-            <div
-              className={`feishu-requirement-row${presentations[task.id]?.unread ? " is-unread" : ""}`}
-              role="button"
-              tabIndex={0}
-              key={task.id}
-              onClick={() => onOpenTask(task)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onOpenTask(task);
-                }
-              }}
-            >
-              <span>{task.title}</span>
-              {presentations[task.id]?.unread && (
-                <span className="task-unread-dot" aria-label={text("有未读更新", "Unread updates")} />
-              )}
-            </div>
-          )) : (
-            <div className="feishu-requirements-empty">
-              {hasActiveFilters
-                ? text("当前筛选下没有匹配需求", "No requirements match the current filters")
-                : text("暂无需求", "No requirements")}
-            </div>
-          )}
-        </div>
-      </div>
-    );
   }
 
   return (
