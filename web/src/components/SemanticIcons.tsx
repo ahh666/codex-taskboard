@@ -194,6 +194,16 @@ export function ConversationIcon(props: Omit<MaskIconProps, "source">) {
   return <MaskIcon {...props} source={conversationSource} />;
 }
 
+export function CodexResumeIcon({ color = "#5D5D5F", ...props }: BasicIconProps) {
+  return (
+    <SvgIcon {...props} color={color} fill="none">
+      <path fill="none" fillRule="evenodd" clipRule="evenodd" d="M13.4398 5.53325L9.65977 1.93325C9.17311 1.86659 8.62644 1.83325 8.02644 1.83325C3.83311 1.83325 2.43311 3.37992 2.43311 7.99992C2.43311 12.6266 3.83311 14.1666 8.02644 14.1666C12.2264 14.1666 13.6264 12.6266 13.6264 7.99992C13.6264 7.05325 13.5664 6.23325 13.4398 5.53325Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.28955 1.88843V3.66243C9.28955 4.90109 10.2936 5.90443 11.5322 5.90443H13.4996" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10.2667 10.3333H7M5 7L6 8L5 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </SvgIcon>
+  );
+}
+
 export function RelationIcon(props: BasicIconProps) {
   return (
     <SvgIcon {...props} fill="none">

@@ -58,6 +58,7 @@ import {
   AttachmentIcon,
   BlockingRelationIcon,
   BranchIcon,
+  CodexResumeIcon,
   ConversationIcon,
   DeleteIcon,
   DueDateIcon,
@@ -341,23 +342,39 @@ function ActivityChangeIcon({ field, before, after }: {
 function ConversationLink({
   threadId,
   onOpen,
+  onCopy,
 }: {
   threadId: string;
   onOpen: () => void;
+  onCopy: (text: string, announcement: string) => void;
 }) {
   const { text } = useTaskboardI18n();
   return (
-    <button
-      className="issue-conversation-link"
-      type="button"
-      title={text(`查看对话 ${threadId}`, `View conversation ${threadId}`)}
-      onClick={onOpen}
-    >
-      <ConversationIcon color="currentColor" size={16} />
-      <strong>{text("查看对话", "View conversation")}</strong>
-      <span className="conversation-divider" aria-hidden="true" />
-      <span className="conversation-thread-id">{threadId}</span>
-    </button>
+    <div className="issue-conversation-actions">
+      <button
+        className="issue-conversation-link"
+        type="button"
+        title={text(`查看对话 ${threadId}`, `View conversation ${threadId}`)}
+        onClick={onOpen}
+      >
+        <ConversationIcon color="currentColor" size={16} />
+        <strong>{text("查看对话", "View conversation")}</strong>
+        <span className="conversation-divider" aria-hidden="true" />
+        <span className="conversation-thread-id">{threadId}</span>
+      </button>
+      <button
+        className="issue-conversation-copy"
+        type="button"
+        title={text("复制终端命令", "Copy terminal command")}
+        onClick={() => onCopy(
+          `codex resume ${threadId}`,
+          text("Codex 恢复命令已复制。", "Codex resume command copied."),
+        )}
+      >
+        <CodexResumeIcon />
+        <span>{text("复制终端命令", "Copy terminal command")}</span>
+      </button>
+    </div>
   );
 }
 
@@ -1116,6 +1133,7 @@ export function TaskDetail({
                       onOpen={() => currentTask.threadBinding
                         ? onOpenThread(currentTask.threadBinding)
                         : onOpenLegacyLocalThread(currentTask.legacyLocalThreadId!)}
+                      onCopy={onCopy}
                     />
                   </div>
                 )}
@@ -1502,6 +1520,7 @@ export function TaskDetail({
                             onOpen={() => comment.threadBinding
                               ? onOpenThread(comment.threadBinding)
                               : onOpenLegacyLocalThread(comment.legacyLocalThreadId!)}
+                            onCopy={onCopy}
                           />
                         </div>
                       )}

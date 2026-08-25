@@ -490,7 +490,7 @@ export function inlineMediaText(segments: InlineMediaSegment[]): string {
 export function serializeInlineMedia(segments: InlineMediaSegment[]): string {
   return segments.map((segment) => {
     if (segment.type === "text") return segment.text;
-    if (segment.type === "pending-image") return `\n\n${segment.token}\n\n`;
+    if (segment.type === "pending-image") return segment.token;
     return segment.markdown;
   }).join("");
 }
