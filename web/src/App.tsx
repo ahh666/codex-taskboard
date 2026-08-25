@@ -34,8 +34,6 @@ import {
   listArchivedTasks,
   listDevelopmentContexts,
   listDeviceWorkspaces,
-  listFeishuTasklists,
-  listFeishuTasklistTasks,
   listProjects,
   listTasks,
   moveTask as moveTaskRequest,
@@ -45,7 +43,7 @@ import {
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
-  saveFeishuTasklists,
+  saveFeishuView,
   startFeishuAuthorization,
   syncFeishuConnection,
   syncJiraConnection,
@@ -130,7 +128,6 @@ import {
   type CodexThreadBinding,
   type DevelopmentScan,
   type FeishuConnection,
-  type FeishuTasklist,
   type HostContext,
   type IssueRelationOrigin,
   type IssueRelationType,
@@ -786,7 +783,6 @@ export function App() {
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [feishuDialogOpen, setFeishuDialogOpen] = useState(false);
   const [feishuConnection, setFeishuConnection] = useState<FeishuConnection | null>(null);
-  const [feishuTasklists, setFeishuTasklists] = useState<FeishuTasklist[]>([]);
   const [feishuSaving, setFeishuSaving] = useState(false);
   const [feishuSyncing, setFeishuSyncing] = useState(false);
   const [feishuError, setFeishuError] = useState<string | null>(null);
@@ -3136,8 +3132,6 @@ export function App() {
         setFeishuConnection(connection);
         if (connection.authorizationState !== "pending") {
           if (connection.authorized) {
-            const tasklists = await listFeishuTasklists();
-            setFeishuTasklists(tasklists);
             setAnnouncement(text("飞书授权完成", "Feishu authorization completed"));
           }
           return;
@@ -3187,44 +3181,19 @@ export function App() {
     }
   }
 
-  async function refreshFeishuTasklists() {
+  async function saveFeishuViewSelection(viewUrl: string) {
     if (feishuSaving) return;
     setFeishuSaving(true);
     setFeishuError(null);
     try {
-      const connection = await getFeishuConnection();
-      if (!connection.authorized) {
-        throw new Error(text("请先完成飞书授权", "Complete Feishu authorization first"));
-      }
-      const tasklists = await listFeishuTasklists();
-      setFeishuConnection(connection);
-      setFeishuTasklists(tasklists);
-    } catch (error) {
-      setFeishuError(errorMessage(error));
-    } finally {
-      setFeishuSaving(false);
-    }
-  }
-
-  async function saveFeishuTasklistSelection(guids: string[]) {
-    if (feishuSaving) return;
-    setFeishuSaving(true);
-    setFeishuError(null);
-    try {
-      const connection = await saveFeishuTasklists(guids);
+      const connection = await saveFeishuView(viewUrl);
       const nextProjects = await listProjects();
       setFeishuConnection(connection);
       setProjects(nextProjects);
       setFeishuDialogOpen(false);
       changeProject(connection.projectId);
       await refreshTasks(connection.projectId);
-      const skippedNames = connection.skippedTasklists?.map((tasklist) => tasklist.name).filter(Boolean) ?? [];
-      setAnnouncement(skippedNames.length > 0
-        ? text(
-          `飞书任务已同步，已跳过无权读取的清单：${skippedNames.join("、")}`,
-          `Feishu tasks synced. Skipped task lists without read access: ${skippedNames.join(", ")}`,
-        )
-        : text("飞书任务已同步", "Feishu tasks synced"));
+      setAnnouncement(text("飞书需求已同步", "Feishu requirements synced"));
     } catch (error) {
       setFeishuError(errorMessage(error));
     } finally {
@@ -3243,7 +3212,7 @@ export function App() {
         refreshTasks(selectedProjectId, { quiet: true }),
         refreshProjectList(),
       ]);
-      setAnnouncement(text("飞书任务已同步", "Feishu tasks synced"));
+      setAnnouncement(text("飞书需求已同步", "Feishu requirements synced"));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -3475,8 +3444,8 @@ export function App() {
                       <RelationIcon className="project-avatar" color="currentColor" size={16} />
                       <span>
                         {feishuConnection?.configured
-                          ? text("飞书任务设置", "Feishu task settings")
-                          : text("连接飞书任务", "Connect Feishu tasks")}
+                          ? text("飞书需求设置", "Feishu requirement settings")
+                          : text("接入飞书需求", "Connect Feishu requirements")}
                       </span>
                     </button>
                     <button
@@ -3955,7 +3924,6 @@ export function App() {
       {feishuDialogOpen && (
         <FeishuConnectionDialog
           connection={feishuConnection}
-          tasklists={feishuTasklists}
           saving={feishuSaving}
           error={feishuError}
           onClose={() => {
@@ -3963,9 +3931,7 @@ export function App() {
           }}
           onAuthorize={authorizeFeishu}
           onCancelAuthorization={cancelFeishu}
-          onRefreshTasklists={refreshFeishuTasklists}
-          onLoadTasklistTasks={listFeishuTasklistTasks}
-          onSaveTasklists={saveFeishuTasklistSelection}
+          onSaveView={saveFeishuViewSelection}
         />
       )}
 

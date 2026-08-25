@@ -30,18 +30,13 @@ npm run dev
 
 The Vite UI runs at <http://127.0.0.1:5173> and proxies API requests to the local service.
 
-## Connect Feishu tasks
+## Connect Feishu Project requirements
 
-Taskboard can sync the Feishu task lists that the authorized user can read, including teammate-owned tasks in shared lists. This is not an integration with Feishu Project work items.
+Taskboard syncs actual requirement work items (`story`) from a Feishu Project view. It does not use Feishu Task task lists.
 
-For development, configure the fixed Feishu custom app with `CODEX_TASKBOARD_FEISHU_APP_ID` and `CODEX_TASKBOARD_FEISHU_APP_SECRET`; release builds inject the same values during `app:prepare` and keep them out of Git. Then choose “Connect Feishu tasks” from the project menu. Taskboard starts the bundled official `lark-cli` only after that click and displays a QR code plus an authorization link. The frontend never asks for or stores the app secret. An administrator must approve these user scopes for the custom app:
+Choose “Connect Feishu requirements” from the project menu. Taskboard starts the bundled official [Meegle CLI](https://github.com/larksuite/meegle-cli) only after that click. Complete browser or device-code QR authorization, then paste a Feishu Project requirement view URL such as `https://project.feishu.cn/<space>/storyView/<view-id>`. The CLI stores the user credential in the operating system keychain; Taskboard stores only the selected view URL and parsed identifiers in `.data/feishu-connection.json`.
 
-- `task:task:read`
-- `task:tasklist:read`
-- `task:task:write`
-- `offline_access`
-
-After authorization, Taskboard lists the task lists available to that user. Select the task lists to sync. Taskboard projects every task into the “Feishu tasks” project and can write back the title, description, due date, and todo/done state. Create, reassignment, comments, attachments, dependencies, priorities, and labels remain managed in Feishu. Tasklist selections are stored in `.data/feishu-connection.json`; user tokens are managed by the bundled CLI profile in the operating system keychain.
+Saving the view reads requirements visible to the authorized user, including title, description, status, priority, people, and Feishu Project detail URL, and projects each work item into the “Feishu requirements” project. Requirement content remains managed in Feishu Project.
 
 ## Use the CLI
 

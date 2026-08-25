@@ -2,97 +2,178 @@ import { FEISHU_PROJECT_ID } from "../shared/domain.mjs";
 import { ApiError } from "./database.mjs";
 
 const SYNC_INTERVAL_MS = 60_000;
-const DETAIL_REQUEST_INTERVAL_MS = 100;
-
-function isTasklistPermissionError(error) {
-  return error instanceof ApiError
-    && error.code === "FEISHU_CLI_COMMAND_FAILED"
-    && Number(error.details?.cliError?.code) === 1470403;
-}
 
 function limitedString(value, fallback, maxLength) {
   const result = String(value ?? fallback).trim();
   return (result || fallback).slice(0, maxLength);
 }
 
-function normalizeTaskPreview(summary) {
-  const guid = limitedString(summary?.guid, "", 256);
-  if (!guid) return null;
-  return {
-    guid,
-    summary: limitedString(summary?.summary, "未命名需求", 240),
-    completed: Number(summary?.completed_at) > 0,
-  };
+function readableValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(readableValue).filter(Boolean).join("、");
+  if (typeof value === "object") {
+    for (const key of ["display_name", "name", "label", "text", "content", "value", "title"]) {
+      const result = readableValue(value[key]);
+      if (result) return result;
+    }
+  }
+  return "";
+}
+
+function fieldMap(item) {
+  const result = new Map();
+  if (Array.isArray(item?.fields)) {
+    for (const field of item.fields) {
+      const key = limitedString(field?.field_key ?? field?.key ?? field?.api_name, "", 256);
+      const name = limitedString(field?.field_name ?? field?.name, "", 256);
+      const value = field?.field_value ?? field?.value;
+      if (key) result.set(key, value);
+      if (name) result.set(name, value);
+    }
+  } else if (item?.fields && typeof item.fields === "object") {
+    for (const [key, value] of Object.entries(item.fields)) result.set(key, value);
+  }
+  return result;
+}
+
+function fieldValue(item, fields, ...keys) {
+  for (const key of keys) {
+    if (item?.[key] !== undefined && item[key] !== null) return item[key];
+    if (fields.has(key)) return fields.get(key);
+  }
+  return null;
+}
+
+function workItemId(item) {
+  return limitedString(
+    item?.work_item_id ?? item?.workItemId ?? item?.work_item_info?.work_item_id ?? item?.id,
+    "",
+    256,
+  );
 }
 
 function timestampToIso(value) {
-  const milliseconds = Number(value);
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return new Date().toISOString();
-  return new Date(milliseconds).toISOString();
+  if (typeof value === "string" && value && !Number.isNaN(Date.parse(value))) {
+    return new Date(value).toISOString();
+  }
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) {
+    return new Date(number < 10_000_000_000 ? number * 1_000 : number).toISOString();
+  }
+  return new Date().toISOString();
 }
 
-function dueDateFromTask(task) {
-  const timestamp = Number(task?.due?.timestamp);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
-  return new Date(timestamp).toISOString().slice(0, 10);
+function statusFromText(value) {
+  const status = readableValue(value);
+  if (/完成|已结束|关闭|终止|done|closed|finished/i.test(status)) return "done";
+  if (/评审|验收|review/i.test(status)) return "in_review";
+  if (/阻塞|blocked/i.test(status)) return "blocked";
+  if (/进行|处理中|开发中|设计中|in.progress/i.test(status)) return "in_progress";
+  if (/取消|canceled/i.test(status)) return "canceled";
+  return "todo";
 }
 
-function actorFromFeishu(member, fallback) {
-  const id = limitedString(member?.id, fallback, 240);
+function priorityFromText(value) {
+  const priority = readableValue(value).toUpperCase();
+  if (priority === "P0" || /紧急|URGENT/.test(priority)) return "urgent";
+  if (priority === "P1" || /高|HIGH/.test(priority)) return "high";
+  if (priority === "P2" || /中|MEDIUM/.test(priority)) return "medium";
+  if (priority === "P3" || /低|LOW/.test(priority)) return "low";
+  return "none";
+}
+
+function actorFromValue(value, fallback) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const id = limitedString(
+    candidate?.user_key ?? candidate?.userKey ?? candidate?.id ?? readableValue(candidate),
+    fallback,
+    240,
+  );
   return {
     type: "user",
-    id: `feishu:${id}`,
-    name: limitedString(member?.name, fallback, 120),
-    avatarUrl: null,
+    id: `feishu-project:${id}`,
+    name: limitedString(
+      candidate?.display_name ?? candidate?.name ?? candidate?.username ?? readableValue(candidate),
+      fallback,
+      120,
+    ),
+    avatarUrl: typeof candidate?.avatar_url === "string" ? candidate.avatar_url : null,
   };
 }
 
-function normalizeTask(task, tasklistNames, index) {
-  const guid = limitedString(task?.guid, "", 256);
-  if (!guid) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书返回的任务缺少 GUID");
-  const members = Array.isArray(task.members) ? task.members : [];
-  const assignee = members.find((member) => member?.role === "assignee") ?? members[0] ?? task.creator;
-  const creator = task.creator ?? assignee;
-  const labels = [...tasklistNames].sort((left, right) => left.localeCompare(right)).slice(0, 20);
+function normalizeWorkItem(item, view, index) {
+  const id = workItemId(item);
+  if (!id) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书项目返回的需求缺少工作项 ID");
+  const fields = fieldMap(item);
+  const title = readableValue(fieldValue(
+    item,
+    fields,
+    "name",
+    "work_item_name",
+    "需求名称",
+  )) || readableValue(item?.work_item_info?.work_item_name) || "未命名需求";
+  const statusValue = fieldValue(item, fields, "work_item_status", "status", "状态")
+    ?? item?.state_info?.end_state_key_name;
+  const priorityValue = fieldValue(item, fields, "priority", "优先级");
+  const creatorValue = fieldValue(item, fields, "created_by", "creator", "创建人");
+  const assigneeValue = fieldValue(
+    item,
+    fields,
+    "current_status_operator",
+    "assignee",
+    "owners",
+    "role_owners",
+    "负责人",
+  );
+  const description = readableValue(fieldValue(
+    item,
+    fields,
+    "description",
+    "requirement_description",
+    "需求描述",
+  ));
+  const statusLabel = readableValue(statusValue);
+  const externalOrigin = `feishu-project:${view.host}/${view.simpleName}`;
   return {
-    id: `FEISHU:${guid}`,
-    identifier: `FEISHU:${guid}`,
-    title: limitedString(task.summary, "未命名任务", 240),
-    description: typeof task.description === "string" ? task.description.slice(0, 100_000) : "",
-    status: Number(task.completed_at) > 0 ? "done" : "todo",
-    priority: "none",
-    labels,
+    id: `FEISHU-PROJECT:${id}`,
+    identifier: `FEISHU:${view.simpleName.toUpperCase()}:${id}`,
+    title: limitedString(title, "未命名需求", 240),
+    description: description.slice(0, 100_000),
+    status: statusFromText(statusValue),
+    priority: priorityFromText(priorityValue),
+    labels: statusLabel ? [limitedString(statusLabel, "", 120)] : [],
     sortOrder: (index + 1) * 1024,
-    creator: actorFromFeishu(creator, "飞书用户"),
-    assignee: actorFromFeishu(assignee, "未分配"),
-    dueDate: dueDateFromTask(task),
-    externalOrigin: "feishu",
-    externalId: guid,
-    externalKey: limitedString(task.task_id ?? guid, guid, 256),
-    externalUrl: typeof task.url === "string" && task.url.length <= 2_048 ? task.url : null,
-    createdAt: timestampToIso(task.created_at),
-    updatedAt: timestampToIso(task.updated_at),
+    creator: actorFromValue(creatorValue, "飞书项目用户"),
+    assignee: actorFromValue(assigneeValue, "未分配"),
+    dueDate: null,
+    externalOrigin,
+    externalId: id,
+    externalKey: id,
+    externalUrl: `https://${view.host}/${view.simpleName}/${view.workItemType}/detail/${encodeURIComponent(id)}`,
+    createdAt: timestampToIso(fieldValue(item, fields, "created_at", "createdAt", "创建时间")),
+    updatedAt: timestampToIso(fieldValue(item, fields, "updated_at", "updatedAt", "更新时间")),
   };
 }
 
 function safeConnection(localConfig, cliStatus, lastSyncedAt, authorization = {}) {
-  const tasklists = localConfig?.tasklists ?? [];
   const session = authorization.state ? authorization : cliStatus;
   const authorizationState = session.state ?? session.authorizationState
     ?? (cliStatus.authorized ? "authorized" : "idle");
+  const view = localConfig?.view ?? null;
   return {
-    configured: Boolean(cliStatus.configured || tasklists.length > 0),
+    configured: Boolean(view),
     cliAvailable: cliStatus.cliAvailable !== false,
     authorized: cliStatus.authorized === true,
-    authorizationReady: cliStatus.cliAvailable !== false && cliStatus.configured === true,
+    authorizationReady: cliStatus.cliAvailable !== false,
     authorizationState,
     authorizationUrl: session.authorizationUrl ?? null,
     authorizationQrCode: session.authorizationQrCode ?? null,
     authorizationExpiresAt: session.authorizationExpiresAt ?? null,
-    appId: cliStatus.appId ?? null,
     displayName: cliStatus.displayName ?? null,
-    scopes: cliStatus.scopes ?? [],
-    tasklists,
+    viewUrl: view?.url ?? null,
+    viewId: view?.viewId ?? null,
     projectId: FEISHU_PROJECT_ID,
     lastSyncedAt,
     error: session.error ?? cliStatus.error ?? null,
@@ -107,7 +188,7 @@ export function createFeishuIntegration({ configStore, database, cli }) {
   let pendingSync = null;
 
   async function readConfig() {
-    return (await configStore.read()) ?? { version: 2, tasklists: [] };
+    return (await configStore.read()) ?? { version: 3, view: null };
   }
 
   async function connectionStatus(authorization = {}) {
@@ -117,43 +198,16 @@ export function createFeishuIntegration({ configStore, database, cli }) {
   async function requireAuthorized() {
     const status = await cli.status();
     if (!status.authorized) {
-      throw new ApiError(401, "FEISHU_REAUTH_REQUIRED", "请先完成飞书登录授权");
+      throw new ApiError(401, "FEISHU_REAUTH_REQUIRED", "请先完成飞书项目登录授权");
     }
     return status;
   }
 
-  async function syncWithConfig(
-    config,
-    { archiveMissing = true, summariesByGuid = new Map() } = {},
-  ) {
-    if (config.tasklists.length === 0) {
-      database.syncFeishuTasks([], { archiveMissing, projectName: "飞书任务" });
-      lastSyncedAt = new Date().toISOString();
-      return connectionStatus();
-    }
-    const tasklistNames = new Map();
-    for (const tasklist of config.tasklists) {
-      const summaries = summariesByGuid.has(tasklist.guid)
-        ? summariesByGuid.get(tasklist.guid)
-        : await cli.listTasklistTasks(tasklist.guid);
-      for (const summary of summaries) {
-        if (typeof summary?.guid !== "string") continue;
-        const names = tasklistNames.get(summary.guid) ?? new Set();
-        names.add(tasklist.name);
-        tasklistNames.set(summary.guid, names);
-      }
-    }
-    const tasks = [];
-    for (const [guid, names] of tasklistNames) {
-      const task = await cli.getTask(guid);
-      tasks.push(normalizeTask(task, names, tasks.length));
-      if (tasks.length < tasklistNames.size) {
-        await new Promise((resolve) => setTimeout(resolve, DETAIL_REQUEST_INTERVAL_MS));
-      }
-    }
-    database.syncFeishuTasks(tasks, { archiveMissing, projectName: "飞书任务" });
+  async function syncWithView(view, { archiveMissing = true } = {}) {
+    const items = await cli.listViewWorkItems(view);
+    const tasks = items.map((item, index) => normalizeWorkItem(item, view, index));
+    database.syncFeishuTasks(tasks, { archiveMissing, projectName: "飞书需求" });
     lastSyncedAt = new Date().toISOString();
-    return connectionStatus();
   }
 
   return {
@@ -168,107 +222,40 @@ export function createFeishuIntegration({ configStore, database, cli }) {
       await cli.cancelAuthorization();
       return connectionStatus();
     },
-    async listTasklists() {
+    async saveView(viewUrl) {
       await requireAuthorized();
-      return cli.listTasklists();
-    },
-    async listTasklistTasks(guid) {
-      await requireAuthorized();
-      try {
-        return (await cli.listTasklistTasks(guid)).flatMap((summary) => {
-          const preview = normalizeTaskPreview(summary);
-          return preview ? [preview] : [];
-        });
-      } catch (error) {
-        if (isTasklistPermissionError(error)) {
-          throw new ApiError(
-            403,
-            "FEISHU_TASKLIST_PERMISSION_REQUIRED",
-            "当前账号无权读取此任务清单中的需求",
-          );
-        }
-        throw error;
-      }
-    },
-    async saveTasklists(input) {
-      await requireAuthorized();
-      const available = await cli.listTasklists();
-      const availableByGuid = new Map(available.map((tasklist) => [tasklist.guid, tasklist]));
-      const selected = input.map((tasklist) => availableByGuid.get(tasklist.guid)).filter(Boolean);
-      if (selected.length !== input.length) {
-        throw new ApiError(409, "FEISHU_TASKLIST_UNAVAILABLE", "所选飞书任务清单已不可访问，请刷新清单后重试");
-      }
-      const readable = [];
-      const skipped = [];
-      const summariesByGuid = new Map();
-      for (const tasklist of selected) {
-        try {
-          summariesByGuid.set(tasklist.guid, await cli.listTasklistTasks(tasklist.guid));
-          readable.push(tasklist);
-        } catch (error) {
-          if (!isTasklistPermissionError(error)) throw error;
-          skipped.push(tasklist);
-        }
-      }
-      if (selected.length > 0 && readable.length === 0) {
-        throw new ApiError(
-          409,
-          "FEISHU_TASKLIST_PERMISSION_REQUIRED",
-          "所选飞书任务清单均无权读取任务，请先在飞书中将当前账号加入清单后重试",
-          { tasklists: skipped.map(({ guid, name }) => ({ guid, name })) },
-        );
-      }
-      const savedConfig = await configStore.save({ version: 2, tasklists: readable });
-      const connection = await syncWithConfig(savedConfig, { summariesByGuid });
-      if (skipped.length > 0) {
-        connection.skippedTasklists = skipped.map(({ guid, name }) => ({ guid, name }));
-      }
-      return connection;
+      const view = await cli.decodeViewUrl(viewUrl);
+      await syncWithView(view);
+      const savedConfig = await configStore.save({ version: 3, view });
+      return safeConnection(savedConfig, await cli.status(), lastSyncedAt);
     },
     async sync({ force = false } = {}) {
       const config = await readConfig();
       const status = await cli.status();
-      if (!status.authorized) return safeConnection(config, status, lastSyncedAt);
+      if (!status.authorized || !config.view) return safeConnection(config, status, lastSyncedAt);
       if (!force && lastSyncedAt && Date.now() - Date.parse(lastSyncedAt) < SYNC_INTERVAL_MS) {
         return safeConnection(config, status, lastSyncedAt);
       }
       if (pendingSync) return pendingSync;
-      pendingSync = syncWithConfig(config)
+      pendingSync = syncWithView(config.view)
+        .then(() => connectionStatus())
         .finally(() => { pendingSync = null; });
       return pendingSync;
     },
     async reconcile() {
       await requireAuthorized();
-      return syncWithConfig(await readConfig(), { archiveMissing: false });
+      const config = await readConfig();
+      if (config.view) await syncWithView(config.view, { archiveMissing: false });
+      return connectionStatus();
     },
     async updateTask(task, changes) {
-      if (task.externalOrigin !== "feishu" || !task.externalId) {
-        throw new ApiError(409, "FEISHU_ORIGIN_MISMATCH", "此任务不属于当前飞书连接，请重新同步后再操作");
+      if (task.externalOrigin?.startsWith("feishu-project:") !== true || !task.externalId) {
+        throw new ApiError(409, "FEISHU_ORIGIN_MISMATCH", "此需求不属于当前飞书项目连接，请重新同步后再操作");
       }
-      const updateFields = [];
-      const update = {};
-      if (Object.hasOwn(changes, "title") && changes.title !== task.title) {
-        update.summary = changes.title;
-        updateFields.push("summary");
-      }
-      if (Object.hasOwn(changes, "description") && changes.description !== task.description) {
-        update.description = changes.description;
-        updateFields.push("description");
-      }
-      if (Object.hasOwn(changes, "dueDate") && changes.dueDate !== task.dueDate) {
-        update.due = changes.dueDate
-          ? { timestamp: String(Date.parse(`${changes.dueDate}T00:00:00.000Z`)), is_all_day: true }
-          : {};
-        updateFields.push("due");
-      }
-      if (Object.hasOwn(changes, "status") && changes.status !== task.status) {
-        update.completed_at = changes.status === "done" ? String(Date.now()) : "0";
-        updateFields.push("completed_at");
-      }
-      if (updateFields.length === 0) return false;
-      await requireAuthorized();
-      await cli.patchTask(task.externalId, { task: update, update_fields: updateFields });
-      return true;
+      const externalFieldChanged = ["title", "description", "status", "dueDate"]
+        .some((field) => Object.hasOwn(changes, field));
+      if (!externalFieldChanged) return false;
+      throw new ApiError(409, "FEISHU_FIELD_UNAVAILABLE", "请在飞书项目中修改需求内容");
     },
     async close() {
       await cli.close?.();

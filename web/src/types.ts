@@ -449,18 +449,6 @@ export interface JiraConnection {
   insecureHttp: boolean;
 }
 
-export interface FeishuTasklist {
-  guid: string;
-  name: string;
-  url: string | null;
-}
-
-export interface FeishuTaskPreview {
-  guid: string;
-  summary: string;
-  completed: boolean;
-}
-
 export interface FeishuConnection {
   configured: boolean;
   cliAvailable: boolean;
@@ -470,11 +458,9 @@ export interface FeishuConnection {
   authorizationUrl: string | null;
   authorizationQrCode: string | null;
   authorizationExpiresAt: string | null;
-  appId: string | null;
   displayName: string | null;
-  scopes: string[];
-  tasklists: FeishuTasklist[];
-  skippedTasklists?: FeishuTasklist[];
+  viewUrl: string | null;
+  viewId: string | null;
   projectId: string;
   lastSyncedAt: string | null;
   error: string | null;

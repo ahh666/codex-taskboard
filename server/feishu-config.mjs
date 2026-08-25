@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 
 export class FeishuConfigError extends Error {
   constructor(code, message) {
@@ -26,44 +26,40 @@ function plainString(value, field, { required = false, maxLength = 256 } = {}) {
   return normalized || null;
 }
 
-function tasklists(value) {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 100) {
-    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书任务清单最多只能选择 100 项");
+function projectView(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书需求视图配置无效");
   }
-  const seen = new Set();
-  return value.flatMap((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书任务清单格式无效");
-    }
-    const guid = plainString(item.guid, "tasklist.guid", { required: true, maxLength: 256 });
-    const name = plainString(item.name, "tasklist.name", { required: true, maxLength: 256 });
-    const url = plainString(item.url, "tasklist.url", { maxLength: 2_048 });
-    if (seen.has(guid)) return [];
-    seen.add(guid);
-    return [{ guid, name, url }];
-  });
+  const allowed = new Set(["url", "host", "simpleName", "viewId", "workItemType"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书需求视图配置包含未知字段");
+  }
+  return {
+    url: plainString(value.url, "view.url", { required: true, maxLength: 2_048 }),
+    host: plainString(value.host, "view.host", { required: true, maxLength: 256 }),
+    simpleName: plainString(value.simpleName, "view.simpleName", { required: true, maxLength: 256 }),
+    viewId: plainString(value.viewId, "view.viewId", { required: true, maxLength: 256 }),
+    workItemType: plainString(value.workItemType, "view.workItemType", { required: true, maxLength: 128 }),
+  };
 }
 
 function parseConfig(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件无效");
   }
-  if (value.version === 1) {
-    return {
-      version: CONFIG_VERSION,
-      tasklists: tasklists(value.tasklists),
-    };
+  if (value.version === 1 || value.version === 2) {
+    return { version: CONFIG_VERSION, view: null };
   }
   if (value.version !== CONFIG_VERSION) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件版本无效");
   }
-  if (Object.keys(value).some((key) => !new Set(["version", "tasklists"]).has(key))) {
+  if (Object.keys(value).some((key) => !new Set(["version", "view"]).has(key))) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件包含未知字段");
   }
   return {
     version: CONFIG_VERSION,
-    tasklists: tasklists(value.tasklists),
+    view: projectView(value.view),
   };
 }
 

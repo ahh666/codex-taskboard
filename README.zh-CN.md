@@ -30,18 +30,13 @@ npm run dev
 
 Vite UI 运行在 <http://127.0.0.1:5173>，并将 API 请求代理到本地服务。
 
-## 接入飞书任务
+## 接入飞书项目需求
 
-Taskboard 可以同步当前授权用户可读取的飞书任务清单，包括共享清单中其他成员负责的任务；这不是飞书 Project 工作项集成。
+Taskboard 同步的是飞书项目视图中的真实需求工作项（`story`），不是飞书 Task 任务清单。
 
-先在启动 Taskboard 的本地服务环境中配置固定飞书自建应用：`CODEX_TASKBOARD_FEISHU_APP_ID` 和 `CODEX_TASKBOARD_FEISHU_APP_SECRET`。然后从项目菜单选择“连接飞书任务”，将对话框显示的完整回调地址登记到飞书开发者后台，点击“登录并授权飞书”完成浏览器授权。应用密钥只由本地服务读取，前端不会要求或保存密钥。自建应用需要管理员批准以下用户授权范围：
+从项目菜单选择“接入飞书需求”。Taskboard 只在用户点击后启动内置官方 [Meegle CLI](https://github.com/larksuite/meegle-cli)，通过浏览器或设备码二维码完成授权，然后粘贴飞书项目需求视图 URL，例如 `https://project.feishu.cn/<空间>/storyView/<视图ID>`。用户凭证由 CLI 保存到操作系统钥匙串，Taskboard 只在 `.data/feishu-connection.json` 保存视图 URL 和解析后的标识。
 
-- `task:task:read`
-- `task:tasklist:read`
-- `task:task:write`
-- `offline_access`
-
-授权完成后刷新并选择要同步的任务清单。Taskboard 会将全部任务投影到“飞书任务”项目，并可回写标题、描述、截止日期和待办/完成状态；创建、改派、评论、附件、依赖、优先级和标签仍应在飞书中操作。本地凭据保存在 `.data/feishu-connection.json`，文件权限为 `0600`。
+保存视图后，Taskboard 会读取当前授权用户可见的需求标题、描述、状态、优先级、人员和飞书项目详情地址，将每个工作项投影到“飞书需求”项目中。需求内容仍在飞书项目中维护。
 
 ## 使用 CLI
 

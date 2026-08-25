@@ -16,8 +16,6 @@ import type {
   CodexThreadBinding,
   DevelopmentScan,
   FeishuConnection,
-  FeishuTaskPreview,
-  FeishuTasklist,
   HostContext,
   IssueRelationOrigin,
   IssueRelationType,
@@ -212,15 +210,14 @@ function emptyFeishuConnection(): FeishuConnection {
     configured: false,
     cliAvailable: false,
     authorized: false,
-    appId: null,
     displayName: null,
     authorizationReady: false,
     authorizationState: "idle",
     authorizationUrl: null,
     authorizationQrCode: null,
     authorizationExpiresAt: null,
-    scopes: [],
-    tasklists: [],
+    viewUrl: null,
+    viewId: null,
     projectId: "feishu-tasks",
     lastSyncedAt: null,
     error: null,
@@ -256,22 +253,10 @@ export async function cancelFeishuAuthorization(): Promise<FeishuConnection> {
   return data.connection;
 }
 
-export async function listFeishuTasklists(): Promise<FeishuTasklist[]> {
-  const data = await request<{ tasklists: FeishuTasklist[] }>("/api/local/feishu-connection/tasklists");
-  return data.tasklists;
-}
-
-export async function listFeishuTasklistTasks(guid: string): Promise<FeishuTaskPreview[]> {
-  const data = await request<{ tasks: FeishuTaskPreview[] }>(
-    `/api/local/feishu-connection/tasklists/${encodeURIComponent(guid)}/tasks`,
-  );
-  return data.tasks;
-}
-
-export async function saveFeishuTasklists(guids: string[]): Promise<FeishuConnection> {
+export async function saveFeishuView(viewUrl: string): Promise<FeishuConnection> {
   const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection", {
     method: "PUT",
-    body: JSON.stringify({ tasklists: guids.map((guid) => ({ guid })) }),
+    body: JSON.stringify({ viewUrl }),
   });
   return data.connection;
 }
