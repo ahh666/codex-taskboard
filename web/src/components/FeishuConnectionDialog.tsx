@@ -70,7 +70,7 @@ export function FeishuConnectionDialog({
 
         {pending && (
           <div className="feishu-authorization-pending">
-            <p className="feishu-connection-help">{text("请扫码或打开授权链接完成飞书项目登录。", "Scan the QR code or open the authorization link to sign in.")}</p>
+            <p className="feishu-connection-help">{text("请打开授权链接完成飞书项目登录；设备码页面支持手机扫码。", "Open the authorization link to sign in; the device-code page supports phone scanning.")}</p>
             {authorizationExpiry && (
               <p className="feishu-connection-help">
                 {text(`授权有效期至 ${authorizationExpiry}`, `Authorization expires at ${authorizationExpiry}`)}
