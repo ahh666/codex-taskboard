@@ -880,6 +880,13 @@ export function App() {
   const isAllProjects = selectedProjectId === ALL_PROJECTS_ID;
   const isJiraProject = selectedProject?.source === "jira";
   const isFeishuProject = selectedProject?.source === "feishu";
+  const feishuRequirementsConnected = feishuConnection?.configured === true
+    && feishuConnection.authorized === true;
+  const feishuRequirementsActionLabel = feishuSyncing
+    ? text("同步中…", "Syncing…")
+    : feishuRequirementsConnected
+      ? text("同步飞书需求", "Sync Feishu requirements")
+      : text("接入飞书需求", "Connect Feishu requirements");
   const isExternalProject = selectedProject?.source !== undefined && selectedProject.source !== "local";
   const storedBoardDisplaySettings = projectBoardDisplaySettings[selectedProjectId]
     ?? DEFAULT_BOARD_DISPLAY_SETTINGS;
@@ -3548,7 +3555,7 @@ export function App() {
                 <RefreshIcon color="currentColor" />
               </button>
             )}
-            {isFeishuProject && (
+            {isFeishuProject && (boardView !== "issues" || detailTask) && (
               <button
                 className="icon-button"
                 type="button"
@@ -3620,6 +3627,24 @@ export function App() {
             )}
           </div>
           {(boardView === "issues" || boardView === "list" || boardView === "gantt") && <div className="toolbar-tools">
+            {boardView === "issues" && (
+              <button
+                className={`feishu-requirements-action${feishuSyncing ? " is-syncing" : ""}`}
+                type="button"
+                disabled={feishuSyncing}
+                onClick={() => {
+                  if (feishuRequirementsConnected) void syncFeishuNow();
+                  else openFeishuDialog();
+                }}
+                aria-label={feishuRequirementsActionLabel}
+                title={feishuRequirementsActionLabel}
+              >
+                {feishuRequirementsConnected
+                  ? <RefreshIcon color="currentColor" size={14} />
+                  : <RelationIcon color="currentColor" size={14} />}
+                <span>{feishuRequirementsActionLabel}</span>
+              </button>
+            )}
             <div className={`search-field${search ? " has-value" : ""}`} title={text("搜索议题 (/)", "Search issues (/)")}>
               <TaskboardIcon className="search-icon" name="search" />
               <input
