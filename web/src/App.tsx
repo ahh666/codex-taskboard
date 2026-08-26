@@ -3758,16 +3758,21 @@ export function App() {
           && tasks.length === 0
           && selectedProject
           && aiImportReadyProjectId === selectedProject.id ? (
-          <div className="page-empty">
-            <h2>{text("当前项目还没有任务", "This project has no issues yet")}</h2>
+          <div className="page-empty project-task-empty">
+            <span className="project-task-empty-eyebrow">
+              <span aria-hidden="true" />
+              {text("项目已准备好", "Project ready")}
+            </span>
+            <h2>{text("选择当前项目的启动方式", "Choose how to start this project")}</h2>
             <p>{text(
-              "让 Codex 检查当前项目目录对应的对话，并整理任务状态。",
-              "Ask Codex to inspect conversations for this project directory and organize their task status.",
+              "让 Codex 整理当前项目中的任务状态，也可以直接新建议题，或接入已有的飞书需求。",
+              "Ask Codex to organize this project's task status, add an issue directly, or connect existing Feishu requirements.",
             )}</p>
-            <div className="page-empty-actions">
+            <div className="project-task-empty-actions">
               <button
-                className="button primary"
+                className="project-task-empty-action is-primary"
                 type="button"
+                aria-label={text("导入当前项目任务状态", "Import current project task status")}
                 onClick={() => setAiOpenThreadRequest((current) => ({
                   projectId: selectedProject.id,
                   issueId: null,
@@ -3778,14 +3783,56 @@ export function App() {
                   requestId: (current?.requestId ?? 0) + 1,
                 }))}
               >
-                {text("导入当前项目任务状态", "Import current project task status")}
+                <span className="project-task-empty-icon" aria-hidden="true">
+                  <RefreshIcon size={16} />
+                </span>
+                <strong>{text("导入当前项目任务状态", "Import current project task status")}</strong>
+                <small>{text(
+                  "让 Codex 检查项目目录对应的对话，并整理已有任务状态。",
+                  "Ask Codex to inspect matching conversations and organize existing task status.",
+                )}</small>
+                <span className="project-task-empty-link">
+                  {text("开始导入", "Start import")}
+                  <LinearIcon name="chevronRight" />
+                </span>
               </button>
               <button
-                className="button secondary"
+                className="project-task-empty-action"
                 type="button"
+                aria-label={text("添加议题", "Add issue")}
                 onClick={() => setEditor({ task: null, status: "todo" })}
               >
-                {text("添加议题", "Add issue")}
+                <span className="project-task-empty-icon" aria-hidden="true">
+                  <PlusIcon size={16} />
+                </span>
+                <strong>{text("添加第一个议题", "Add the first issue")}</strong>
+                <small>{text(
+                  "记录一个待处理事项，让 Codex 开始协助推进。",
+                  "Capture a task so Codex can start helping move it forward.",
+                )}</small>
+                <span className="project-task-empty-link">
+                  {text("立即添加", "Add now")}
+                  <LinearIcon name="chevronRight" />
+                </span>
+              </button>
+              <button
+                className="project-task-empty-action is-feishu"
+                type="button"
+                aria-label={text("接入飞书需求", "Connect Feishu requirements")}
+                onClick={openFeishuDialog}
+              >
+                <span className="project-task-empty-icon" aria-hidden="true">
+                  <RelationIcon size={16} />
+                </span>
+                <strong>{text("接入飞书需求", "Connect Feishu requirements")}</strong>
+                <small>{text(
+                  "同步飞书项目中的需求，自动整理为可执行的议题。",
+                  "Sync requirements from a Feishu project into actionable issues.",
+                )}</small>
+                <span className="project-task-empty-link">
+                  {text("连接飞书项目", "Connect Feishu project")}
+                  <LinearIcon name="chevronRight" />
+                </span>
               </button>
             </div>
           </div>
