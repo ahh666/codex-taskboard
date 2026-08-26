@@ -1694,7 +1694,6 @@ export function TaskDetail({
                   value: status,
                   label: taskStatusLabel(language, status),
                   icon: <StatusIcon status={status} color="currentColor" size={14} />,
-                  className: `status-icon-${STATUS_DETAILS[status].tone}`,
                 })).filter((option) => (
                   !isFeishuTask || option.value === "todo" || option.value === "done"
                 ))}
@@ -1779,7 +1778,7 @@ export function TaskDetail({
                 onOpenChange={(open) => setPropertyMenu(open ? "labels" : null)}
                 onChange={(nextLabels) => void saveTask({ labels: nextLabels }, "labels")}
                 onCreateLabel={onCreateLabel}
-                onDeleteLabel={currentTask.source === "jira" ? undefined : onDeleteLabel}
+                onDeleteLabel={currentTask.source === "jira" || isFeishuTask ? undefined : onDeleteLabel}
               />
             </div>
             <div className="detail-property-row development-property">
@@ -1851,7 +1850,7 @@ export function TaskDetail({
               <input
                 type="date"
                 value={currentTask.dueDate ?? ""}
-                disabled={savingProperty === "dueDate"}
+                disabled={isFeishuTask || savingProperty === "dueDate"}
                 onChange={(event) => void saveTask({
                   dueDate: event.target.value || null,
                   ...(event.target.value ? {} : { recurrence: null }),

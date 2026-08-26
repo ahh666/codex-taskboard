@@ -48,7 +48,7 @@ function ArchivedTaskCard({
           <StatusIcon status={task.status} size={14} />
           {taskStatusLabel(language, task.status)}
         </span>
-        {task.source === "local" && (
+        {task.source !== "jira" && (
           <>
             <button
               className="archived-task-action archived-task-restore"

@@ -9,11 +9,6 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL("../dist/web", import.meta.url)),
     emptyOutDir: true,
-    rolldownOptions: {
-      output: {
-        codeSplitting: false,
-      },
-    },
   },
   server: {
     host: "127.0.0.1",

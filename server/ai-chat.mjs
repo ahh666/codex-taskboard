@@ -369,18 +369,6 @@ export class AiChatService {
       return this.#startComposerTurn(thread, input);
     }
     this.#validateTurnInput(input);
-    if (this.#threadUsesAppServer(threadId)) {
-      return this.#startComposerTurn(thread, {
-        contractVersion: "composer.v1",
-        revision: "app-server-follow-up",
-        document: {
-          version: 1,
-          nodes: input.message ? [{ type: "text", text: input.message }] : [],
-        },
-        dangerFullAccessConfirmed: input.dangerFullAccessConfirmed,
-        attachments: input.attachments ?? [],
-      });
-    }
     if (thread.sandbox === "danger-full-access" && input.dangerFullAccessConfirmed !== true) {
       throw new ApiError(
         400,
@@ -986,12 +974,6 @@ export class AiChatService {
   #threadIsActive(thread) {
     return Boolean(thread.currentRun)
       || [...this.active.values()].some((active) => active.threadId === thread.id);
-  }
-
-  #threadUsesAppServer(threadId) {
-    return this.database.listAiChatEvents(threadId).some(
-      (event) => event.data?.contractVersion === "composer.v1",
-    );
   }
 
   async #finishRun({

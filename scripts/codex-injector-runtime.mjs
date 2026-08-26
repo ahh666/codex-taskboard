@@ -36,26 +36,6 @@ function parseHostRequest(payload, parseAutomationRequest) {
     } catch {}
   }
   if (
-    request.action === "api-request"
-    && typeof request.requestId === "string"
-    && /^[a-z0-9-]{1,80}$/i.test(request.requestId)
-    && typeof request.path === "string"
-    && request.path.startsWith("/api/")
-    && request.path.length <= 4_096
-    && typeof request.method === "string"
-    && /^(GET|HEAD|POST|PUT|PATCH|DELETE)$/i.test(request.method)
-    && (request.body === null || typeof request.body === "string")
-    && (request.body === null || request.body.length <= 5_000_000)
-    && request.headers
-    && typeof request.headers === "object"
-    && !Array.isArray(request.headers)
-    && Object.entries(request.headers).every(([key, value]) => (
-      /^[a-z0-9-]{1,80}$/i.test(key)
-      && typeof value === "string"
-      && value.length <= 8_192
-    ))
-  ) return { id, request, error: null };
-  if (
     request.action === "open-attachment"
     && typeof request.attachmentId === "string"
     && /^[a-f0-9-]{36}$/i.test(request.attachmentId)
@@ -136,8 +116,6 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.ensure();
     } else if (parsed.request.action === "load-frame") {
       result = await handlers.loadFrame(parsed.request);
-    } else if (parsed.request.action === "api-request") {
-      result = await handlers.apiRequest(parsed.request);
     } else if (parsed.request.action === "open-external") {
       result = await handlers.openExternal(parsed.request);
     } else if (parsed.request.action === "open-attachment") {

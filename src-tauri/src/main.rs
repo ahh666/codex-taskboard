@@ -85,6 +85,7 @@ const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
     "27131c82ac63c2884c1fcb7dd22a4e1c75975c7d79eb3fa3483a7949dd5f284d",
     "ae74aec793decf6d9013c36f4b53e01723796a45567b77e9e9f22b4a168d3fbe",
 ];
+const TASKBOARD_PREFERRED_PORT: u16 = 47823;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
@@ -590,11 +591,17 @@ fn loopback_listener() -> Result<TcpListener, String> {
     TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())
 }
 
+fn taskboard_loopback_listener() -> Result<TcpListener, String> {
+    TcpListener::bind(("127.0.0.1", TASKBOARD_PREFERRED_PORT))
+        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
-        *listener = Some(loopback_listener()?);
+        *listener = Some(taskboard_loopback_listener()?);
     }
     let listener = listener.as_ref().unwrap();
     let port = listener
@@ -606,7 +613,7 @@ fn taskboard_listener(state: &LauncherState) -> Result<(Option<i32>, u16), Strin
 
 #[cfg(target_os = "windows")]
 fn taskboard_listener(_state: &LauncherState) -> Result<(Option<i32>, u16), String> {
-    let listener = loopback_listener()?;
+    let listener = taskboard_loopback_listener()?;
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?

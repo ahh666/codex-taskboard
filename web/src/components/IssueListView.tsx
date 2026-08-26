@@ -149,7 +149,7 @@ export function IssueListView({
                             <select
                               aria-label={text(`${displayIdentifier} 负责人`, `${displayIdentifier} assignee`)}
                               value={assigneeTarget}
-                              disabled={task.source !== "local"}
+                              disabled={task.source === "jira"}
                               onChange={(event) => void onUpdate(task, { assigneeTarget: event.target.value as "current-user" | "codex-agent" }).catch(() => {})}
                             >
                               <option value="current-user">{currentUser.name}</option>

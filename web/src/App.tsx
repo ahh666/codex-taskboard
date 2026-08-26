@@ -16,19 +16,19 @@ import {
   ApiError,
   addTaskRelation,
   archiveTask as archiveTaskRequest,
-  cancelFeishuAuthorization,
   createProjectLabel as createProjectLabelRequest,
   createProject as createProjectRequest,
   createTask as createTaskRequest,
   configureJiraConnection,
+  cancelFeishuAuthorization,
   deleteArchivedTask as deleteArchivedTaskRequest,
   deleteProjectLabel as deleteProjectLabelRequest,
   deleteProject as deleteProjectRequest,
   getAiChatCatalog,
   getCodexThreadProgress,
   getHostRuntime,
-  getFeishuConnection,
   getJiraConnection,
+  getFeishuConnection,
   getTaskboardRevision,
   getTaskboardMetadata,
   listArchivedTasks,
@@ -44,10 +44,10 @@ import {
   restoreTask as restoreTaskRequest,
   setApiText,
   setCurrentUserActor,
+  syncJiraConnection,
   saveFeishuView,
   startFeishuAuthorization,
   syncFeishuConnection,
-  syncJiraConnection,
   uploadAttachment,
   updateTask as updateTaskRequest,
 } from "./api";
@@ -78,8 +78,6 @@ import {
   DeleteIcon,
   MoreIcon,
   PlusIcon,
-  ProjectIcon,
-  RecurrenceIcon,
   RefreshIcon,
   RelationIcon,
 } from "./components/SemanticIcons";
@@ -132,11 +130,11 @@ import {
   type CodexProjectIdentity,
   type CodexThreadBinding,
   type DevelopmentScan,
-  type FeishuConnection,
   type HostContext,
   type IssueRelationOrigin,
   type IssueRelationType,
   type JiraConnection,
+  type FeishuConnection,
   type Project,
   type Task,
   type TaskboardMetadata,
@@ -776,6 +774,7 @@ export function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(
     () => taskboardStorage.getItem(FIRST_USE_COMPLETE_KEY) === null,
   );
+  const [projectMenuSearch, setProjectMenuSearch] = useState("");
   const [projectContextMenu, setProjectContextMenu] = useState<ProjectContextMenuState | null>(null);
   const [projectCreateOpen, setProjectCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -885,11 +884,7 @@ export function App() {
   const storedBoardDisplaySettings = projectBoardDisplaySettings[selectedProjectId]
     ?? DEFAULT_BOARD_DISPLAY_SETTINGS;
   const boardDisplaySettings = isFeishuProject
-    ? {
-        ...storedBoardDisplaySettings,
-        mainStatuses: ["todo", "done"] as OtherTaskTab[],
-        sidebarStatuses: [] as OtherTaskTab[],
-      }
+    ? { ...storedBoardDisplaySettings, mainStatuses: ["todo", "done"] as OtherTaskTab[], sidebarStatuses: [] as OtherTaskTab[] }
     : storedBoardDisplaySettings;
   const automationModels = automationCatalog && automationCatalog.projectId === selectedProject?.id
     ? automationCatalog.models
@@ -1143,9 +1138,13 @@ export function App() {
       ...sortedChoices.filter((project) => project.issueCount === 0),
     ];
   }, [hostContext?.projects, projectCodexIdentities, projects, recentProjectIds, text]);
-  const projectMenuChoices = projectChoices.filter(
+  const projectMenuCandidates = projectChoices.filter(
     (project) => project.id !== GLOBAL_PROJECT_ID || project.issueCount > 0,
   );
+  const projectMenuNeedle = projectMenuSearch.trim().toLocaleLowerCase();
+  const projectMenuChoices = projectMenuNeedle
+    ? projectMenuCandidates.filter((project) => project.name.toLocaleLowerCase().includes(projectMenuNeedle))
+    : projectMenuCandidates;
   const firstEmptyProjectId = projectMenuChoices.find((project) => project.issueCount === 0)?.id ?? null;
   const hasProjectsWithIssues = projectMenuChoices.some((project) => project.issueCount > 0);
   const editorProjectId = editor?.task?.projectId
@@ -1966,23 +1965,12 @@ export function App() {
 
   useEffect(() => {
     const isAllProjectTaskScope = taskScopeProjectId === ALL_PROJECTS_ID;
-    if (
-      (!isExternalProject
-        && !(isAllProjectTaskScope && (jiraConnection?.configured || feishuConnection?.authorized)))
-      || !taskScopeProjectId
-    ) return;
+    if ((!isExternalProject && !(isAllProjectTaskScope && (jiraConnection?.configured || feishuConnection?.authorized))) || !taskScopeProjectId) return;
     const timer = window.setInterval(() => {
       void refreshTasks(taskScopeProjectId, { quiet: true });
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [
-    feishuConnection?.authorized,
-    isAllProjects,
-    isExternalProject,
-    jiraConnection?.configured,
-    refreshTasks,
-    taskScopeProjectId,
-  ]);
+  }, [feishuConnection?.authorized, isAllProjects, isExternalProject, jiraConnection?.configured, refreshTasks, taskScopeProjectId]);
 
   useEffect(() => {
     const standalone = !embedded || window.parent === window;
@@ -2168,7 +2156,6 @@ export function App() {
         && !event.metaKey
         && !event.ctrlKey
         && selectedProjectId
-        && !isAllProjects
         && !isExternalProject
       ) {
         event.preventDefault();
@@ -2190,7 +2177,7 @@ export function App() {
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [boardView, contextMenu, detailTaskId, editor, isAllProjects, isExternalProject, projectMenuOpen, selectedProjectId]);
+  }, [boardView, contextMenu, detailTaskId, editor, isExternalProject, projectMenuOpen, selectedProjectId]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(
@@ -3190,9 +3177,7 @@ export function App() {
         const connection = await getFeishuConnection();
         setFeishuConnection(connection);
         if (connection.authorizationState !== "pending") {
-          if (connection.authorized) {
-            setAnnouncement(text("飞书授权完成", "Feishu authorization completed"));
-          }
+          if (connection.authorized) setAnnouncement(text("飞书授权完成", "Feishu authorization completed"));
           return;
         }
       } catch (error) {
@@ -3210,12 +3195,8 @@ export function App() {
     setFeishuError(null);
     try {
       const authorization = await startFeishuAuthorization();
-      if (authorizationWindow) {
-        if (authorization.authorizationUrl) authorizationWindow.location.href = authorization.authorizationUrl;
-        authorizationWindow.focus();
-      } else if (authorization.authorizationUrl) {
-        window.open(authorization.authorizationUrl, "_blank", "noopener");
-      }
+      if (authorizationWindow && authorization.authorizationUrl) authorizationWindow.location.href = authorization.authorizationUrl;
+      else if (authorization.authorizationUrl) window.open(authorization.authorizationUrl, "_blank", "noopener");
       setFeishuConnection(authorization);
       setAnnouncement(text("请扫码或打开飞书授权页完成授权", "Scan the QR code or open Feishu to authorize"));
       void pollFeishuAuthorization();
@@ -3246,9 +3227,8 @@ export function App() {
     setFeishuError(null);
     try {
       const connection = await saveFeishuView(viewUrl);
-      const nextProjects = await listProjects();
       setFeishuConnection(connection);
-      setProjects(nextProjects);
+      setProjects(await listProjects());
       setFeishuDialogOpen(false);
       changeProject(connection.projectId);
       await refreshTasks(connection.projectId);
@@ -3267,10 +3247,7 @@ export function App() {
     try {
       const connection = await syncFeishuConnection();
       setFeishuConnection(connection);
-      await Promise.all([
-        refreshTasks(selectedProjectId, { quiet: true }),
-        refreshProjectList(),
-      ]);
+      await Promise.all([refreshTasks(selectedProjectId, { quiet: true }), refreshProjectList()]);
       setAnnouncement(text("飞书需求已同步", "Feishu requirements synced"));
     } catch (error) {
       setActionError(errorMessage(error));
@@ -3427,6 +3404,7 @@ export function App() {
                   aria-expanded={projectMenuOpen}
                   onClick={() => {
                     setProjectContextMenu(null);
+                    setProjectMenuSearch("");
                     setProjectMenuOpen((current) => !current);
                   }}
                 >
@@ -3436,86 +3414,121 @@ export function App() {
                 {projectMenuOpen && (
                   <div className="header-project-menu" role="menu" aria-label={text("项目", "Projects")}>
                     <span>{text("切换项目", "Switch project")}</span>
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={isAllProjects}
-                      disabled={openingProjectId !== null}
-                      onClick={() => {
-                        if (isAllProjects) setProjectMenuOpen(false);
-                        else changeProject(ALL_PROJECTS_ID);
-                      }}
-                    >
-                      <TaskboardIcon className="project-avatar" name="projectFolder" />
-                      <span>{text("所有项目", "All projects")}</span>
-                      {isAllProjects && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
-                    </button>
-                    <div className="project-menu-divider" role="separator" />
-                    {projectMenuChoices.map((project) => (
-                      <Fragment key={project.id}>
-                        {hasProjectsWithIssues && project.id === firstEmptyProjectId && (
-                          <div className="project-menu-divider" role="separator" />
-                        )}
+                    <div className="project-menu-search">
+                      <label className="sr-only" htmlFor="project-menu-search-input">
+                        {text("按名称筛选项目", "Filter projects by name")}
+                      </label>
+                      <TaskboardIcon name="search" />
+                      <input
+                        id="project-menu-search-input"
+                        autoFocus
+                        type="search"
+                        value={projectMenuSearch}
+                        onChange={(event) => setProjectMenuSearch(event.target.value)}
+                        placeholder={text("筛选项目…", "Filter projects…")}
+                      />
+                      {projectMenuSearch && (
                         <button
+                          className="search-clear"
                           type="button"
-                          role="menuitemradio"
-                          aria-checked={project.id === selectedProjectId}
-                          disabled={openingProjectId !== null}
-                          onContextMenu={project.id.startsWith("temp-") ? (event) => {
-                            event.preventDefault();
-                            setProjectContextMenu({
-                              project,
-                              x: event.clientX,
-                              y: event.clientY,
-                            });
-                          } : undefined}
-                          onClick={() => {
-                            if (project.id === selectedProjectId) setProjectMenuOpen(false);
-                            else void selectProject(project);
-                          }}
+                          aria-label={text("清除项目筛选", "Clear project filter")}
+                          onClick={() => setProjectMenuSearch("")}
                         >
-                          <TaskboardIcon className="project-avatar" name="projectFolder" />
-                          <span>{project.name}</span>
-                          {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                          <LinearIcon name="close" />
                         </button>
-                      </Fragment>
-                    ))}
-                    <div className="project-menu-divider" role="separator" />
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={openingProjectId !== null}
-                      onClick={openJiraDialog}
-                    >
-                      <RelationIcon className="project-avatar" color="currentColor" size={16} />
-                      <span>
-                        {jiraConnection?.configured
-                          ? text("Jira 设置", "Jira settings")
-                          : text("连接 Jira", "Connect Jira")}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={openingProjectId !== null}
-                      onClick={openFeishuDialog}
-                    >
-                      <RelationIcon className="project-avatar" color="currentColor" size={16} />
-                      <span>
-                        {feishuConnection?.configured
-                          ? text("飞书需求设置", "Feishu requirement settings")
-                          : text("接入飞书需求", "Connect Feishu requirements")}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      disabled={openingProjectId !== null}
-                      onClick={openCreateProjectDialog}
-                    >
-                      <PlusIcon className="project-avatar" color="currentColor" size={16} />
-                      <span>{text("创建项目", "Create project")}</span>
-                    </button>
+                      )}
+                    </div>
+                    <div className="project-menu-list">
+                      {!projectMenuNeedle && (
+                        <>
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={isAllProjects}
+                            disabled={openingProjectId !== null}
+                            onClick={() => {
+                              if (isAllProjects) setProjectMenuOpen(false);
+                              else changeProject(ALL_PROJECTS_ID);
+                            }}
+                          >
+                            <TaskboardIcon className="project-avatar" name="projectFolder" />
+                            <span>{text("所有项目", "All projects")}</span>
+                            {isAllProjects && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                          </button>
+                          <div className="project-menu-divider" role="separator" />
+                        </>
+                      )}
+                      {projectMenuChoices.map((project) => (
+                        <Fragment key={project.id}>
+                          {hasProjectsWithIssues && project.id === firstEmptyProjectId && (
+                            <div className="project-menu-divider" role="separator" />
+                          )}
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={project.id === selectedProjectId}
+                            disabled={openingProjectId !== null}
+                            onContextMenu={project.id.startsWith("temp-") ? (event) => {
+                              event.preventDefault();
+                              setProjectContextMenu({
+                                project,
+                                x: event.clientX,
+                                y: event.clientY,
+                              });
+                            } : undefined}
+                            onClick={() => {
+                              if (project.id === selectedProjectId) setProjectMenuOpen(false);
+                              else void selectProject(project);
+                            }}
+                          >
+                            <TaskboardIcon className="project-avatar" name="projectFolder" />
+                            <span>{project.name}</span>
+                            {project.id === selectedProjectId && <span className="project-menu-check" aria-hidden="true"><LinearIcon name="check" /></span>}
+                          </button>
+                        </Fragment>
+                      ))}
+                      {projectMenuNeedle && projectMenuChoices.length === 0 && (
+                        <div className="project-menu-empty">{text("没有匹配项目", "No matching projects")}</div>
+                      )}
+                    </div>
+                    <div className="project-menu-actions">
+                      <div className="project-menu-divider" role="separator" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={openingProjectId !== null}
+                        onClick={openJiraDialog}
+                      >
+                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
+                        <span>
+                          {jiraConnection?.configured
+                            ? text("Jira 设置", "Jira settings")
+                            : text("连接 Jira", "Connect Jira")}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={openingProjectId !== null}
+                        onClick={openFeishuDialog}
+                      >
+                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
+                        <span>
+                          {feishuConnection?.configured
+                            ? text("飞书需求设置", "Feishu requirement settings")
+                            : text("接入飞书需求", "Connect Feishu requirements")}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={openingProjectId !== null}
+                        onClick={openCreateProjectDialog}
+                      >
+                        <PlusIcon className="project-avatar" color="currentColor" size={16} />
+                        <span>{text("创建项目", "Create project")}</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3525,7 +3538,7 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
-            {selectedProject && !isExternalProject && (
+            {selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
                 models={automationModels}
@@ -3557,7 +3570,7 @@ export function App() {
                 aria-label={text("同步飞书需求", "Sync Feishu requirements")}
                 title={text("同步飞书需求", "Sync Feishu requirements")}
               >
-                <RecurrenceIcon color="currentColor" size={16} />
+                <RefreshIcon color="currentColor" size={16} />
               </button>
             )}
             {selectedProjectId && !isExternalProject && (
@@ -3894,7 +3907,7 @@ export function App() {
                         currentUser={currentUser}
                         showCover={boardDisplaySettings.cover}
                         showBody={boardDisplaySettings.body}
-                        createEnabled={!isAllProjects && !isExternalProject}
+                        createEnabled={!isExternalProject}
                         onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
                         onEdit={openTaskDetail}
@@ -3935,7 +3948,7 @@ export function App() {
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}
                     onTabChange={setOtherTasksTab}
-                    onCreate={isExternalProject || isAllProjects
+                    onCreate={isExternalProject
                       ? undefined
                       : (initialStatus) => setEditor({ task: null, status: initialStatus })}
                     onRestore={(task) => void restoreArchivedTask(task)}
@@ -4239,7 +4252,7 @@ export function App() {
       )}
 
       {localAiChatAvailable && !isAllProjects && (
-        !isExternalProject && <Suspense fallback={null}>
+        <Suspense fallback={null}>
           <AiChat
             available
             projectId={selectedProjectId || null}
