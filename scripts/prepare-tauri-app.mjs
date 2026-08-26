@@ -31,26 +31,6 @@ const linuxTarget = "x86_64-unknown-linux-gnu";
 const linuxNodeArchiveName = `node-v${nodeVersion}-linux-x64.tar.gz`;
 const linuxNodeArchiveSha256 =
   "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a";
-const feishuCliVersion = "1.0.82";
-const feishuCliArchives = {
-  "darwin-arm64": {
-    name: `lark-cli-${feishuCliVersion}-darwin-arm64.tar.gz`,
-    sha256: "4aad6d81b1a39a641c04d2a2c386e91a09c67334f027c32712bd65aef8dc6a7a",
-  },
-  "darwin-amd64": {
-    name: `lark-cli-${feishuCliVersion}-darwin-amd64.tar.gz`,
-    sha256: "3f9800b350399f58031e8fe534279c02afef627623d6bf767e895c1a9029ba62",
-  },
-  "linux-amd64": {
-    name: `lark-cli-${feishuCliVersion}-linux-amd64.tar.gz`,
-    sha256: "3ab5f030d66580b9e7908880fc6a21bb0c5cb214816579819b093c7ea1608cab",
-  },
-  "windows-amd64": {
-    name: `lark-cli-${feishuCliVersion}-windows-amd64.zip`,
-    sha256: "7d12b020965c9f8d86b2b09d932878f91476053bd5460ce83fcf985ff62b983",
-  },
-};
-const feishuCliReleaseBase = `https://github.com/larksuite/cli/releases/download/v${feishuCliVersion}`;
 const meegleCliVersion = "1.0.20";
 const meeglePackageUrl = `https://registry.npmjs.org/@lark-project/meegle/-/meegle-${meegleCliVersion}.tgz`;
 const meeglePackageSha256 = "042ae94cf8e50c246fe0b6db96abdb0753fbd4bfb5a5f5445909e25a89de7d8d";
@@ -142,20 +122,6 @@ async function verifiedNodeArchive(archiveName, expectedChecksum) {
   return { archiveName, archivePath };
 }
 
-async function verifiedFeishuCliArchive(platformKey) {
-  const archive = feishuCliArchives[platformKey];
-  if (!archive) throw new Error(`Missing Feishu CLI archive metadata for ${platformKey}`);
-  const archivePath = path.join(runtimeCacheDirectory, archive.name);
-  if (!(await exists(archivePath)) || (await sha256(archivePath)) !== archive.sha256) {
-    await rm(archivePath, { force: true });
-    await download(`${feishuCliReleaseBase}/${archive.name}`, archivePath);
-  }
-  if ((await sha256(archivePath)) !== archive.sha256) {
-    throw new Error(`Feishu CLI checksum verification failed for ${archive.name}`);
-  }
-  return archivePath;
-}
-
 async function verifiedMeeglePackage() {
   const archivePath = path.join(runtimeCacheDirectory, `meegle-${meegleCliVersion}.tgz`);
   if (!(await exists(archivePath)) || (await sha256(archivePath)) !== meeglePackageSha256) {
@@ -177,7 +143,7 @@ async function extractNodeRuntime(architecture) {
   const destination = path.join(extractionDirectory, architecture);
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
-  run(process.platform === "win32" ? path.join(process.env.SystemRoot, "System32", "tar.exe") : "/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
   return path.join(destination, `node-v${nodeVersion}-darwin-${architecture}`);
 }
 
@@ -267,6 +233,38 @@ async function prepareLinuxNodeRuntime() {
   );
 }
 
+async function prepareMeegleCliRuntime() {
+  const archivePath = await verifiedMeeglePackage();
+  const destination = path.join(extractionDirectory, "meegle-package");
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+  const binDirectory = path.join(resourcesDirectory, "bin");
+  const licensesDirectory = path.join(resourcesDirectory, "licenses");
+  await mkdir(binDirectory, { recursive: true });
+  await mkdir(licensesDirectory, { recursive: true });
+  await copyFile(path.join(destination, "package", "LICENSE"), path.join(licensesDirectory, "meegle-LICENSE"));
+  await writeFile(path.join(resourcesDirectory, "meegle-version.json"), `${JSON.stringify({ version: meegleCliVersion, source: "larksuite/meegle-cli" }, null, 2)}\n`);
+  if (target === windowsTarget) {
+    await copyFile(path.join(destination, "package", "bin", "meegle-win32-x64.exe"), path.join(binDirectory, "meegle.exe"));
+    return;
+  }
+  if (target === linuxTarget) {
+    await copyFile(path.join(destination, "package", "bin", "meegle-linux-x64"), path.join(binDirectory, "meegle"));
+    await chmod(path.join(binDirectory, "meegle"), 0o755);
+    return;
+  }
+  const binaryPath = path.join(binDirectory, "meegle");
+  run("/usr/bin/lipo", [
+    "-create",
+    path.join(destination, "package", "bin", "meegle-darwin-arm64"),
+    path.join(destination, "package", "bin", "meegle-darwin-x64"),
+    "-output",
+    binaryPath,
+  ]);
+  await chmod(binaryPath, 0o755);
+}
+
 async function copyApplicationResources() {
   const appResources = path.join(resourcesDirectory, "app");
   await rm(resourcesDirectory, { recursive: true, force: true });
@@ -342,7 +340,9 @@ set -u
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 RESOURCE_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 export CODEX_TASKBOARD_DATA_DIR="\${XDG_DATA_HOME:-$HOME/.local/share}/Codex Taskboard"
-export CODEX_TASKBOARD_RUNTIME_FILE="$CODEX_TASKBOARD_DATA_DIR/launcher-runtime.json"
+if [ -z "\${WSL_DISTRO_NAME-}" ] && [ -z "\${WSL_INTEROP-}" ] && [ -z "\${CODEX_TASKBOARD_RUNTIME_FILE-}" ]; then
+  export CODEX_TASKBOARD_RUNTIME_FILE="$CODEX_TASKBOARD_DATA_DIR/launcher-runtime.json"
+fi
 exec "$RESOURCE_DIR/../../bin/codex-taskboard-node" "$RESOURCE_DIR/app/cli/taskctl.mjs" "$@"
 `;
     const taskctlPath = path.join(resourcesDirectory, "bin", "taskctl");
@@ -365,124 +365,6 @@ exec "$CONTENTS_DIR/MacOS/node" "$CONTENTS_DIR/Resources/app/cli/taskctl.mjs" "$
   await mkdir(path.dirname(taskctlPath), { recursive: true });
   await writeFile(taskctlPath, taskctlWrapper);
   await chmod(taskctlPath, 0o755);
-}
-
-async function prepareFeishuCliRuntime() {
-  const binDirectory = path.join(resourcesDirectory, "bin");
-  const licensesDirectory = path.join(resourcesDirectory, "licenses");
-  await mkdir(binDirectory, { recursive: true });
-  await mkdir(licensesDirectory, { recursive: true });
-
-  const license = `MIT License
-
-Copyright (c) 2026 Lark Technologies Pte. Ltd.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-`;
-  await writeFile(path.join(licensesDirectory, "lark-cli-LICENSE"), license);
-  await writeFile(
-    path.join(resourcesDirectory, "lark-cli-version.json"),
-    `${JSON.stringify({
-      version: feishuCliVersion,
-      source: "larksuite/cli",
-      archives: Object.fromEntries(Object.entries(feishuCliArchives).map(([key, value]) => [key, value])),
-    }, null, 2)}\n`,
-  );
-  await writeFile(
-    path.join(resourcesDirectory, "meegle-version.json"),
-    `${JSON.stringify({ version: meegleCliVersion, source: "larksuite/meegle-cli" }, null, 2)}\n`,
-  );
-
-  if (target === windowsTarget) {
-    const archivePath = await verifiedFeishuCliArchive("windows-amd64");
-    const destination = path.join(extractionDirectory, "feishu-cli-win-x64");
-    await rm(destination, { recursive: true, force: true });
-    await mkdir(destination, { recursive: true });
-    run(path.join(process.env.SystemRoot, "System32", "tar.exe"), ["-xf", archivePath, "-C", destination]);
-    await copyFile(path.join(destination, "lark-cli.exe"), path.join(binDirectory, "lark-cli.exe"));
-    return;
-  }
-
-  if (target === linuxTarget) {
-    const archivePath = await verifiedFeishuCliArchive("linux-amd64");
-    const destination = path.join(extractionDirectory, "feishu-cli-linux-x64");
-    await rm(destination, { recursive: true, force: true });
-    await mkdir(destination, { recursive: true });
-    run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
-    const binaryPath = path.join(binDirectory, "lark-cli");
-    await copyFile(path.join(destination, "lark-cli"), binaryPath);
-    await chmod(binaryPath, 0o755);
-    return;
-  }
-
-  const [armArchive, x64Archive] = await Promise.all([
-    verifiedFeishuCliArchive("darwin-arm64"),
-    verifiedFeishuCliArchive("darwin-amd64"),
-  ]);
-  const armDestination = path.join(extractionDirectory, "feishu-cli-darwin-arm64");
-  const x64Destination = path.join(extractionDirectory, "feishu-cli-darwin-x64");
-  await Promise.all([
-    rm(armDestination, { recursive: true, force: true }),
-    rm(x64Destination, { recursive: true, force: true }),
-  ]);
-  await Promise.all([
-    mkdir(armDestination, { recursive: true }),
-    mkdir(x64Destination, { recursive: true }),
-  ]);
-  run("/usr/bin/tar", ["-xzf", armArchive, "-C", armDestination]);
-  run("/usr/bin/tar", ["-xzf", x64Archive, "-C", x64Destination]);
-  const binaryPath = path.join(binDirectory, "lark-cli");
-  run("/usr/bin/lipo", [
-    "-create",
-    path.join(armDestination, "lark-cli"),
-    path.join(x64Destination, "lark-cli"),
-    "-output",
-    binaryPath,
-  ]);
-  await chmod(binaryPath, 0o755);
-}
-
-async function prepareMeegleCliRuntime() {
-  const archivePath = await verifiedMeeglePackage();
-  const destination = path.join(extractionDirectory, "meegle-package");
-  await rm(destination, { recursive: true, force: true });
-  await mkdir(destination, { recursive: true });
-  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
-  const binDirectory = path.join(resourcesDirectory, "bin");
-  const licensesDirectory = path.join(resourcesDirectory, "licenses");
-  await mkdir(binDirectory, { recursive: true });
-  await mkdir(licensesDirectory, { recursive: true });
-  await copyFile(path.join(destination, "package", "LICENSE"), path.join(licensesDirectory, "meegle-LICENSE"));
-  if (target === windowsTarget) {
-    await copyFile(path.join(destination, "package", "bin", "meegle-win32-x64.exe"), path.join(binDirectory, "meegle.exe"));
-    return;
-  }
-  if (target === linuxTarget) {
-    await copyFile(path.join(destination, "package", "bin", "meegle-linux-x64"), path.join(binDirectory, "meegle"));
-    await chmod(path.join(binDirectory, "meegle"), 0o755);
-    return;
-  }
-  const armPath = path.join(destination, "package", "bin", "meegle-darwin-arm64");
-  const x64Path = path.join(destination, "package", "bin", "meegle-darwin-x64");
-  const binaryPath = path.join(binDirectory, "meegle");
-  run("/usr/bin/lipo", ["-create", armPath, x64Path, "-output", binaryPath]);
-  await chmod(binaryPath, 0o755);
 }
 
 await mkdir(runtimeCacheDirectory, { recursive: true });
