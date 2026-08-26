@@ -5389,22 +5389,6 @@ kbd {
   padding: 40px 32px;
 }
 
-.project-task-empty-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.project-task-empty-eyebrow > span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-quaternary);
-}
-
 .project-task-empty h2 {
   margin: 12px 0 7px;
   font-size: 20px;

@@ -3784,10 +3784,6 @@ export function App() {
           && selectedProject
           && aiImportReadyProjectId === selectedProject.id ? (
           <div className="page-empty project-task-empty">
-            <span className="project-task-empty-eyebrow">
-              <span aria-hidden="true" />
-              {text("项目已准备好", "Project ready")}
-            </span>
             <h2>{text("选择当前项目的启动方式", "Choose how to start this project")}</h2>
             <p>{text(
               "让 Codex 整理当前项目中的任务状态，也可以直接新建议题，或接入已有的飞书需求。",
