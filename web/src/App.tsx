@@ -3497,19 +3497,6 @@ export function App() {
                         type="button"
                         role="menuitem"
                         disabled={openingProjectId !== null}
-                        onClick={openJiraDialog}
-                      >
-                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
-                        <span>
-                          {jiraConnection?.configured
-                            ? text("Jira 设置", "Jira settings")
-                            : text("连接 Jira", "Connect Jira")}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={openingProjectId !== null}
                         onClick={openFeishuDialog}
                       >
                         <RelationIcon className="project-avatar" color="currentColor" size={16} />
