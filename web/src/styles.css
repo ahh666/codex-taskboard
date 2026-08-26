@@ -5414,7 +5414,7 @@ kbd {
   outline-offset: 2px;
 }
 
-.project-task-empty-action.is-primary {
+.project-task-empty-action.is-primary:hover {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
   background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface));
 }
