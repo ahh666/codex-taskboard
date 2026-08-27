@@ -482,6 +482,14 @@ function validateProjectId(value, { required = true } = {}) {
   return id;
 }
 
+function parseFeishuProjectQuery(url) {
+  const keys = [...url.searchParams.keys()];
+  if (keys.some((key) => key !== "projectId") || url.searchParams.getAll("projectId").length > 1) {
+    throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书连接接口仅接受 projectId 查询参数");
+  }
+  return validateProjectId(url.searchParams.get("projectId") ?? FEISHU_PROJECT_ID);
+}
+
 function parseProjectCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set(["id", "name", "workspacePath"]));
@@ -2311,17 +2319,16 @@ export function createTaskboardServer(options = {}) {
       }
 
       if (pathname === "/api/local/feishu-connection") {
-        if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书连接接口不接受查询参数");
-        }
-        if (request.method === "GET") return sendJson(response, 200, { connection: await feishu.status() });
+        const queryProjectId = parseFeishuProjectQuery(url);
+        if (request.method === "GET") return sendJson(response, 200, { connection: await feishu.status(queryProjectId) });
         if (request.method === "PUT") {
           const body = await readJson(request);
           assertPlainObject(body);
-          assertAllowedKeys(body, new Set(["viewUrl"]));
+          assertAllowedKeys(body, new Set(["viewUrl", "projectId"]));
           const viewUrl = stringField(body.viewUrl, "viewUrl", { required: true, maxLength: 2_048 });
-          const connection = await feishu.saveView(viewUrl);
-          const project = database.getProject(FEISHU_PROJECT_ID);
+          const projectId = validateProjectId(body.projectId ?? queryProjectId);
+          const connection = await feishu.saveView(viewUrl, { projectId });
+          const project = database.getProject(projectId);
           if (project) events.emit("project.labels.updated", { project });
           return sendJson(response, 200, { connection });
         }
@@ -2330,9 +2337,7 @@ export function createTaskboardServer(options = {}) {
 
       if (pathname === "/api/local/feishu-connection/authorize") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书授权接口不接受查询参数");
-        }
+        const projectId = parseFeishuProjectQuery(url);
         const activeCloudConfig = await cloudConfig.read();
         if (activeCloudConfig.remoteUrl) {
           throw new ApiError(409, "FEISHU_LOCAL_MODE_REQUIRED", "飞书连接当前仅支持本地数据模式，请先退出云端协作模式");
@@ -2340,26 +2345,22 @@ export function createTaskboardServer(options = {}) {
         const body = await readJson(request);
         assertPlainObject(body);
         assertAllowedKeys(body, new Set());
-        return sendJson(response, 200, { authorization: await feishu.startAuthorization() });
+        return sendJson(response, 200, { authorization: await feishu.startAuthorization(projectId) });
       }
 
       if (pathname === "/api/local/feishu-connection/cancel") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书授权取消接口不接受查询参数");
-        }
+        const projectId = parseFeishuProjectQuery(url);
         await assertEmptyRequestBody(request, "POST /api/local/feishu-connection/cancel");
-        return sendJson(response, 200, { connection: await feishu.cancelAuthorization() });
+        return sendJson(response, 200, { connection: await feishu.cancelAuthorization(projectId) });
       }
 
       if (pathname === "/api/local/feishu-connection/sync") {
         if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);
-        if ([...url.searchParams.keys()].length > 0) {
-          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "飞书同步接口不接受查询参数");
-        }
+        const projectId = parseFeishuProjectQuery(url);
         await assertEmptyRequestBody(request, "POST /api/local/feishu-connection/sync");
-        const connection = await feishu.sync({ force: true });
-        const project = database.getProject(FEISHU_PROJECT_ID);
+        const connection = await feishu.sync({ force: true, projectId });
+        const project = database.getProject(projectId);
         if (project) events.emit("project.labels.updated", { project });
         return sendJson(response, 200, { connection });
       }
@@ -2784,11 +2785,11 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "GET") {
           const filters = parseTaskFilters(url.searchParams);
           if (!filters.projectId) {
-            await Promise.all([jira.sync(), feishu.sync()]);
+            await Promise.all([jira.sync(), feishu.syncAll({ force: false })]);
           } else if (filters.projectId === JIRA_PROJECT_ID) {
             await jira.sync();
-          } else if (filters.projectId === FEISHU_PROJECT_ID) {
-            await feishu.sync();
+          } else if (await feishu.isConfigured(filters.projectId)) {
+            await feishu.sync({ projectId: filters.projectId });
           }
           return sendJson(response, 200, { tasks: database.listTasks(filters) });
         }
@@ -3272,7 +3273,7 @@ export function createTaskboardServer(options = {}) {
             if (jiraChanged || feishuChanged) {
               try {
                 if (jiraChanged) await jira.reconcile();
-                else await feishu.reconcile();
+                else await feishu.reconcile(current.projectId);
               } catch {
                 throw new ApiError(
                   502,

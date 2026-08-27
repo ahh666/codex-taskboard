@@ -1161,11 +1161,12 @@ export class TaskboardDatabase {
     });
   }
 
-  syncFeishuTasks(tasks, { archiveMissing = true, projectName } = {}) {
+  syncFeishuTasks(tasks, { archiveMissing = true, projectName, projectId = FEISHU_PROJECT_ID } = {}) {
+    const existingProject = this.getProject(projectId);
     return this.syncExternalTasks(tasks, {
       archiveMissing,
-      projectName,
-      projectId: FEISHU_PROJECT_ID,
+      projectName: existingProject?.name ?? projectName ?? "飞书需求",
+      projectId,
       source: "feishu",
     });
   }
