@@ -1822,7 +1822,7 @@ export function App() {
       if (requestId !== projectsRequestRef.current) return;
       const [nextJiraConnection, nextFeishuConnection, nextTemporaryTasks] = await Promise.all([
         getJiraConnection(signal),
-        getFeishuConnection(signal),
+        getFeishuConnection(undefined, signal),
         listTasks(GLOBAL_PROJECT_ID, signal),
       ]);
       if (requestId !== projectsRequestRef.current) return;
@@ -1969,6 +1969,16 @@ export function App() {
     void refreshTasks(taskScopeProjectId, { signal: controller.signal });
     return () => controller.abort();
   }, [refreshTasks, taskScopeProjectId]);
+
+  useEffect(() => {
+    setFeishuConnection(null);
+    if (!selectedProjectId || selectedProjectId === ALL_PROJECTS_ID) return;
+    let disposed = false;
+    void getFeishuConnection(selectedProjectId).then((connection) => {
+      if (!disposed) setFeishuConnection(connection);
+    }).catch(() => {});
+    return () => { disposed = true; };
+  }, [selectedProjectId]);
 
   useEffect(() => {
     const isAllProjectTaskScope = taskScopeProjectId === ALL_PROJECTS_ID;
@@ -3181,7 +3191,7 @@ export function App() {
     for (let attempt = 0; attempt < 600; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 1_000));
       try {
-        const connection = await getFeishuConnection();
+        const connection = await getFeishuConnection(selectedProjectId);
         setFeishuConnection(connection);
         if (connection.authorizationState !== "pending") {
           if (connection.authorized) setAnnouncement(text("飞书授权完成", "Feishu authorization completed"));
@@ -3201,7 +3211,7 @@ export function App() {
     setFeishuSaving(true);
     setFeishuError(null);
     try {
-      const authorization = await startFeishuAuthorization();
+      const authorization = await startFeishuAuthorization(selectedProjectId);
       if (authorizationWindow && authorization.authorizationUrl) authorizationWindow.location.href = authorization.authorizationUrl;
       else if (authorization.authorizationUrl) window.open(authorization.authorizationUrl, "_blank", "noopener");
       setFeishuConnection(authorization);
@@ -3220,7 +3230,7 @@ export function App() {
     setFeishuSaving(true);
     setFeishuError(null);
     try {
-      setFeishuConnection(await cancelFeishuAuthorization());
+      setFeishuConnection(await cancelFeishuAuthorization(selectedProjectId));
     } catch (error) {
       setFeishuError(errorMessage(error));
     } finally {
@@ -3233,7 +3243,7 @@ export function App() {
     setFeishuSaving(true);
     setFeishuError(null);
     try {
-      const connection = await saveFeishuView(viewUrl);
+      const connection = await saveFeishuView(viewUrl, selectedProjectId);
       setFeishuConnection(connection);
       setProjects(await listProjects());
       setFeishuDialogOpen(false);
@@ -3252,7 +3262,7 @@ export function App() {
     setFeishuSyncing(true);
     setActionError(null);
     try {
-      const connection = await syncFeishuConnection();
+      const connection = await syncFeishuConnection(selectedProjectId);
       setFeishuConnection(connection);
       await Promise.all([refreshTasks(selectedProjectId, { quiet: true }), refreshProjectList()]);
       setAnnouncement(text("飞书需求已同步", "Feishu requirements synced"));

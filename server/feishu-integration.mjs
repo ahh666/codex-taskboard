@@ -125,7 +125,7 @@ function actorFromValue(value, fallback) {
   };
 }
 
-function normalizeWorkItem(item, view, index) {
+function normalizeWorkItem(item, view, index, projectId) {
   const id = workItemId(item);
   if (!id) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书项目返回的需求缺少工作项 ID");
   const attribute = workItemAttribute(item);
@@ -160,10 +160,10 @@ function normalizeWorkItem(item, view, index) {
     "需求描述",
   ));
   const statusLabel = readableValue(statusValue);
-  const externalOrigin = `feishu-project:${view.host}/${view.simpleName}`;
+  const externalOrigin = `feishu-project:${projectId}:${view.host}/${view.simpleName}`;
   return {
-    id: `FEISHU-PROJECT:${id}`,
-    identifier: `FEISHU:${view.simpleName.toUpperCase()}:${id}`,
+    id: `FEISHU-PROJECT:${projectId}:${id}`,
+    identifier: `FEISHU:${projectId.toUpperCase()}:${view.simpleName.toUpperCase()}:${id}`,
     title: limitedString(title, "未命名需求", 240),
     description: description.slice(0, 100_000),
     status: statusFromText(statusValue),
@@ -182,7 +182,13 @@ function normalizeWorkItem(item, view, index) {
   };
 }
 
-function safeConnection(localConfig, cliStatus, lastSyncedAt, authorization = {}) {
+function safeConnection(
+  localConfig,
+  cliStatus,
+  lastSyncedAt,
+  authorization = {},
+  projectId = FEISHU_PROJECT_ID,
+) {
   const session = authorization.state ? authorization : cliStatus;
   const authorizationState = session.state ?? session.authorizationState
     ?? (cliStatus.authorized ? "authorized" : "idle");
@@ -199,7 +205,7 @@ function safeConnection(localConfig, cliStatus, lastSyncedAt, authorization = {}
     displayName: cliStatus.displayName ?? null,
     viewUrl: view?.url ?? null,
     viewId: view?.viewId ?? null,
-    projectId: FEISHU_PROJECT_ID,
+    projectId,
     lastSyncedAt,
     error: session.error ?? cliStatus.error ?? null,
   };
@@ -209,15 +215,22 @@ export function createFeishuIntegration({ configStore, database, cli }) {
   if (!configStore) throw new Error("configStore is required");
   if (!database) throw new Error("database is required");
   if (!cli) throw new Error("cli is required");
-  let lastSyncedAt = null;
-  let pendingSync = null;
+  const lastSyncedAtByProject = new Map();
+  const pendingSyncByProject = new Map();
 
   async function readConfig() {
-    return (await configStore.read()) ?? { version: 3, view: null };
+    return (await configStore.read()) ?? { version: 4, projects: {} };
   }
 
-  async function connectionStatus(authorization = {}) {
-    return safeConnection(await readConfig(), await cli.status(), lastSyncedAt, authorization);
+  async function connectionStatus(projectId = FEISHU_PROJECT_ID, authorization = {}) {
+    const config = await readConfig();
+    return safeConnection(
+      { version: 4, view: config.projects[projectId] ?? null },
+      await cli.status(),
+      lastSyncedAtByProject.get(projectId) ?? null,
+      authorization,
+      projectId,
+    );
   }
 
   async function requireAuthorized() {
@@ -228,50 +241,74 @@ export function createFeishuIntegration({ configStore, database, cli }) {
     return status;
   }
 
-  async function syncWithView(view, { archiveMissing = true } = {}) {
+  async function syncWithView(view, { archiveMissing = true, projectId = FEISHU_PROJECT_ID } = {}) {
     const items = await cli.listViewWorkItems(view);
-    const tasks = items.map((item, index) => normalizeWorkItem(item, view, index));
-    database.syncFeishuTasks(tasks, { archiveMissing, projectName: "飞书需求" });
-    lastSyncedAt = new Date().toISOString();
+    const tasks = items.map((item, index) => normalizeWorkItem(item, view, index, projectId));
+    database.syncFeishuTasks(tasks, { archiveMissing, projectName: "飞书需求", projectId });
+    lastSyncedAtByProject.set(projectId, new Date().toISOString());
   }
 
   return {
-    async status() {
-      return connectionStatus();
+    async isConfigured(projectId = FEISHU_PROJECT_ID) {
+      const config = await readConfig();
+      return Boolean(config.projects[projectId]);
     },
-    async startAuthorization() {
+    async status(projectId = FEISHU_PROJECT_ID) {
+      return connectionStatus(projectId);
+    },
+    async startAuthorization(projectId = FEISHU_PROJECT_ID) {
       const authorization = await cli.startAuthorization();
-      return connectionStatus(authorization);
+      return connectionStatus(projectId, authorization);
     },
-    async cancelAuthorization() {
+    async cancelAuthorization(projectId = FEISHU_PROJECT_ID) {
       await cli.cancelAuthorization();
-      return connectionStatus();
+      return connectionStatus(projectId);
     },
-    async saveView(viewUrl) {
+    async saveView(viewUrl, { projectId = FEISHU_PROJECT_ID } = {}) {
       await requireAuthorized();
       const view = await cli.decodeViewUrl(viewUrl);
-      await syncWithView(view);
-      const savedConfig = await configStore.save({ version: 3, view });
-      return safeConnection(savedConfig, await cli.status(), lastSyncedAt);
+      await syncWithView(view, { projectId });
+      const current = await readConfig();
+      const savedConfig = await configStore.save({
+        version: 4,
+        projects: { ...current.projects, [projectId]: view },
+      });
+      return safeConnection(
+        { version: 4, view: savedConfig.projects[projectId] ?? null },
+        await cli.status(),
+        lastSyncedAtByProject.get(projectId) ?? null,
+        {},
+        projectId,
+      );
     },
-    async sync({ force = false } = {}) {
+    async sync({ force = false, projectId = FEISHU_PROJECT_ID } = {}) {
       const config = await readConfig();
       const status = await cli.status();
-      if (!status.authorized || !config.view) return safeConnection(config, status, lastSyncedAt);
+      const view = config.projects[projectId] ?? null;
+      if (!status.authorized || !view) return connectionStatus(projectId);
+      const lastSyncedAt = lastSyncedAtByProject.get(projectId);
       if (!force && lastSyncedAt && Date.now() - Date.parse(lastSyncedAt) < SYNC_INTERVAL_MS) {
-        return safeConnection(config, status, lastSyncedAt);
+        return connectionStatus(projectId);
       }
-      if (pendingSync) return pendingSync;
-      pendingSync = syncWithView(config.view)
-        .then(() => connectionStatus())
-        .finally(() => { pendingSync = null; });
+      if (pendingSyncByProject.has(projectId)) return pendingSyncByProject.get(projectId);
+      const pendingSync = syncWithView(view, { projectId })
+        .then(() => connectionStatus(projectId))
+        .finally(() => { pendingSyncByProject.delete(projectId); });
+      pendingSyncByProject.set(projectId, pendingSync);
       return pendingSync;
     },
-    async reconcile() {
+    async syncAll({ force = false } = {}) {
+      const config = await readConfig();
+      for (const projectId of Object.keys(config.projects)) {
+        await this.sync({ force, projectId });
+      }
+    },
+    async reconcile(projectId = FEISHU_PROJECT_ID) {
       await requireAuthorized();
       const config = await readConfig();
-      if (config.view) await syncWithView(config.view, { archiveMissing: false });
-      return connectionStatus();
+      const view = config.projects[projectId] ?? null;
+      if (view) await syncWithView(view, { archiveMissing: false, projectId });
+      return connectionStatus(projectId);
     },
     async updateTask(task, changes) {
       if (task.externalOrigin?.startsWith("feishu-project:") !== true || !task.externalId) {

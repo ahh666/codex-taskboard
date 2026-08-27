@@ -192,7 +192,7 @@ export async function syncJiraConnection(): Promise<JiraConnection> {
   return data.connection;
 }
 
-function emptyFeishuConnection(): FeishuConnection {
+function emptyFeishuConnection(projectId = "feishu-tasks"): FeishuConnection {
   return {
     configured: false,
     cliAvailable: false,
@@ -205,50 +205,54 @@ function emptyFeishuConnection(): FeishuConnection {
     authorizationExpiresAt: null,
     viewUrl: null,
     viewId: null,
-    projectId: "feishu-tasks",
+    projectId,
     lastSyncedAt: null,
     error: null,
   };
 }
 
-export async function getFeishuConnection(signal?: AbortSignal): Promise<FeishuConnection> {
+export async function getFeishuConnection(projectId?: string, signal?: AbortSignal): Promise<FeishuConnection> {
   try {
-    const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection", { signal });
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const data = await request<{ connection: FeishuConnection }>(`/api/local/feishu-connection${query}`, { signal });
     return data.connection;
   } catch (error) {
     if (error instanceof ApiError && (error.code === "LOCAL_COMPANION_REQUIRED" || error.status === 404)) {
-      return emptyFeishuConnection();
+      return emptyFeishuConnection(projectId);
     }
     throw error;
   }
 }
 
-export async function startFeishuAuthorization(): Promise<FeishuConnection> {
+export async function startFeishuAuthorization(projectId?: string): Promise<FeishuConnection> {
+  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
   const data = await request<{ authorization: FeishuConnection }>(
-    "/api/local/feishu-connection/authorize",
+    `/api/local/feishu-connection/authorize${query}`,
     { method: "POST", body: JSON.stringify({}) },
   );
   return data.authorization;
 }
 
-export async function cancelFeishuAuthorization(): Promise<FeishuConnection> {
+export async function cancelFeishuAuthorization(projectId?: string): Promise<FeishuConnection> {
+  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
   const data = await request<{ connection: FeishuConnection }>(
-    "/api/local/feishu-connection/cancel",
+    `/api/local/feishu-connection/cancel${query}`,
     { method: "POST" },
   );
   return data.connection;
 }
 
-export async function saveFeishuView(viewUrl: string): Promise<FeishuConnection> {
+export async function saveFeishuView(viewUrl: string, projectId?: string): Promise<FeishuConnection> {
   const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection", {
     method: "PUT",
-    body: JSON.stringify({ viewUrl }),
+    body: JSON.stringify({ viewUrl, ...(projectId ? { projectId } : {}) }),
   });
   return data.connection;
 }
 
-export async function syncFeishuConnection(): Promise<FeishuConnection> {
-  const data = await request<{ connection: FeishuConnection }>("/api/local/feishu-connection/sync", {
+export async function syncFeishuConnection(projectId?: string): Promise<FeishuConnection> {
+  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const data = await request<{ connection: FeishuConnection }>(`/api/local/feishu-connection/sync${query}`, {
     method: "POST",
   });
   return data.connection;

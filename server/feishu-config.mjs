@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const CONFIG_VERSION = 3;
+const CONFIG_VERSION = 4;
 
 export class FeishuConfigError extends Error {
   constructor(code, message) {
@@ -44,22 +44,45 @@ function projectView(value) {
   };
 }
 
+function projectBindings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书项目绑定配置无效");
+  }
+  const projects = {};
+  for (const [projectId, view] of Object.entries(value)) {
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(projectId)) {
+      throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书项目绑定的项目 ID 无效");
+    }
+    projects[projectId] = projectView(view);
+  }
+  return projects;
+}
+
 function parseConfig(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件无效");
   }
   if (value.version === 1 || value.version === 2) {
-    return { version: CONFIG_VERSION, view: null };
+    return { version: CONFIG_VERSION, projects: {} };
+  }
+  if (value.version === 3) {
+    if (Object.keys(value).some((key) => !new Set(["version", "view"]).has(key))) {
+      throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件包含未知字段");
+    }
+    return {
+      version: CONFIG_VERSION,
+      projects: value.view ? { "feishu-tasks": projectView(value.view) } : {},
+    };
   }
   if (value.version !== CONFIG_VERSION) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件版本无效");
   }
-  if (Object.keys(value).some((key) => !new Set(["version", "view"]).has(key))) {
+  if (Object.keys(value).some((key) => !new Set(["version", "projects"]).has(key))) {
     throw new FeishuConfigError("INVALID_FEISHU_CONFIG", "飞书配置文件包含未知字段");
   }
   return {
     version: CONFIG_VERSION,
-    view: projectView(value.view),
+    projects: projectBindings(value.projects),
   };
 }
 
