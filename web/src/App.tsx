@@ -3514,19 +3514,6 @@ export function App() {
                         type="button"
                         role="menuitem"
                         disabled={openingProjectId !== null}
-                        onClick={openFeishuDialog}
-                      >
-                        <RelationIcon className="project-avatar" color="currentColor" size={16} />
-                        <span>
-                          {feishuConnection?.configured
-                            ? text("飞书需求设置", "Feishu requirement settings")
-                            : text("接入飞书需求", "Connect Feishu requirements")}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={openingProjectId !== null}
                         onClick={openCreateProjectDialog}
                       >
                         <PlusIcon className="project-avatar" color="currentColor" size={16} />
