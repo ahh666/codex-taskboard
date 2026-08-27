@@ -520,11 +520,6 @@
     return metadata;
   }
 
-  async function activeNativeWorkspaceRoots() {
-    const roots = (await requestNativeFetch("active-workspace-roots", {}))?.roots;
-    return Array.isArray(roots) ? roots.filter((root) => typeof root === "string") : [];
-  }
-
   function normalizeNativeRootPath(value) {
     const path = String(value || "").trim();
     if (!path) return "";
@@ -1021,17 +1016,20 @@
     }
   }
 
-  async function waitForNativeProject(targetRoot) {
+  async function waitForNativeProject(projectId, targetRoot) {
     const deadline = Date.now() + 8_000;
     const normalizedTargetRoot = normalizeNativeRootPath(targetRoot);
     while (Date.now() < deadline) {
-      const [projectId, activeRoots] = await Promise.all([
+      const [selectedProjectId, context] = await Promise.all([
         selectedNativeProjectId(),
-        activeNativeWorkspaceRoots(),
+        nativeProjectContext(),
       ]);
+      const project = context.projects.find((candidate) => candidate.id === projectId);
       if (
-        projectId
-        && normalizeNativeRootPath(activeRoots[0]) === normalizedTargetRoot
+        selectedProjectId === projectId
+        && project?.rootPaths?.some((root) => (
+          normalizeNativeRootPath(root) === normalizedTargetRoot
+        ))
       ) return projectId;
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
@@ -1092,7 +1090,7 @@
           type: "electron-add-new-workspace-root-option",
           root: targetRoot,
         });
-        lastNativeProjectId = await waitForNativeProject(targetRoot);
+        lastNativeProjectId = await waitForNativeProject(target.projectId, targetRoot);
       }
 
       closeTaskboard(false);
