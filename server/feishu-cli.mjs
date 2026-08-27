@@ -93,12 +93,28 @@ function workItemId(record) {
   ));
 }
 
-export function resolveFeishuCliPath({ explicitPath, projectRoot = process.cwd(), platform = process.platform } = {}) {
+export function resolveFeishuCliPath({
+  explicitPath,
+  projectRoot = process.cwd(),
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
   if (explicitPath) return path.resolve(explicitPath);
   const binaryName = platform === "win32" ? "meegle.exe" : "meegle";
   const packagedPath = path.resolve(projectRoot, "..", "bin", binaryName);
+  if (existsSync(packagedPath)) return packagedPath;
   const developmentPath = path.resolve(projectRoot, "src-tauri", "resources", "bin", binaryName);
-  if (!existsSync(packagedPath) && existsSync(developmentPath)) return developmentPath;
+  if (existsSync(developmentPath)) return developmentPath;
+  const packageBinaryName = `meegle-${platform}-${arch}${platform === "win32" ? ".exe" : ""}`;
+  const packagePath = path.resolve(
+    projectRoot,
+    "node_modules",
+    "@lark-project",
+    "meegle",
+    "bin",
+    packageBinaryName,
+  );
+  if (existsSync(packagePath)) return packagePath;
   return packagedPath;
 }
 
