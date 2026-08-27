@@ -262,23 +262,23 @@ test("issues open an unsent native Codex composer in the confirmed project", () 
   );
   assert.match(source, /async function createThreadForTask\(payload\)/);
   assert.match(source, /async function nativeProjectContext\(\)/);
-  assert.match(source, /async function activeNativeWorkspaceRoots\(\)/);
-  assert.match(source, /requestNativeFetch\("active-workspace-roots", \{\}\)/);
   assert.match(source, /function normalizeNativeRootPath\(value\)/);
   assert.match(source, /async function resolveNativeProject\(requestedProjectId, workspacePath\)/);
   assert.match(source, /candidate\.id === requestedProjectId\s*\|\|\s*candidate\.rootPaths\.some/);
   assert.match(source, /const targetRoot = normalizedWorkspacePath \? workspacePath : project\?\.rootPaths\[0\]/);
-  assert.match(source, /async function waitForNativeProject\(targetRoot\)/);
+  assert.match(source, /async function waitForNativeProject\(projectId, targetRoot\)/);
   const waitStart = source.indexOf("async function waitForNativeProject");
   const waitSource = source.slice(waitStart, source.indexOf("async function createThreadForTask", waitStart));
   assert.match(waitSource, /selectedNativeProjectId\(\)/);
-  assert.match(waitSource, /activeNativeWorkspaceRoots\(\)/);
-  assert.match(waitSource, /projectId\s*&&\s*normalizeNativeRootPath\(activeRoots\[0\]\) === normalizedTargetRoot/);
+  assert.match(waitSource, /nativeProjectContext\(\)/);
+  assert.match(waitSource, /selectedProjectId === projectId/);
+  assert.match(waitSource, /project\?\.rootPaths\?\.some/);
+  assert.doesNotMatch(waitSource, /activeNativeWorkspaceRoots\(\)/);
   assert.match(
     source,
     /bridge\.sendMessageFromView\(\{\s*type: "electron-add-new-workspace-root-option",\s*root: targetRoot,/,
   );
-  assert.match(source, /await waitForNativeProject\(targetRoot\)/);
+  assert.match(source, /await waitForNativeProject\(target\.projectId, targetRoot\)/);
   assert.match(
     createThreadSource,
     /if \(!projectless && codexProjectKind === "remote"\) \{[\s\S]*?codexHostId = typeof payload\?\.codexHostId[\s\S]*?codexProjectWorkspacePath[\s\S]*?await waitForRemoteProject\(requestedProjectId, codexHostId, codexProjectWorkspacePath\);/,
@@ -383,7 +383,7 @@ test("host context captures all Codex projects even when the sidebar section is 
 test("Codex bootstrap metadata resolves local roots and SSH remote roots asynchronously", async () => {
   const functionSource = source.slice(
     source.indexOf("async function readCodexProjectMetadata"),
-    source.indexOf("\n\n  async function activeNativeWorkspaceRoots"),
+    source.indexOf("\n\n  function normalizeNativeRootPath"),
   );
   const readCodexProjectMetadata = vm.runInNewContext(`(${functionSource})`, {
     window: {
