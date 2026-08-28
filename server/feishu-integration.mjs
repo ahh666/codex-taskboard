@@ -36,19 +36,27 @@ function workItemAttribute(item) {
   return item?.work_item_attribute ?? item?.workItemAttribute ?? item ?? {};
 }
 
-function fieldMap(item) {
-  const result = new Map();
+function fieldEntries(item) {
   const fields = item?.fields ?? item?.work_item_fields ?? item?.workItemFields;
   if (Array.isArray(fields)) {
-    for (const field of fields) {
+    return fields.map((field) => {
       const key = limitedString(field?.field_key ?? field?.key ?? field?.api_name, "", 256);
       const name = limitedString(field?.field_name ?? field?.name, "", 256);
       const value = field?.field_value ?? field?.value;
-      if (key) result.set(key, value);
-      if (name) result.set(name, value);
-    }
-  } else if (fields && typeof fields === "object") {
-    for (const [key, value] of Object.entries(fields)) result.set(key, value);
+      return { key, name, value };
+    });
+  }
+  if (fields && typeof fields === "object") {
+    return Object.entries(fields).map(([key, value]) => ({ key, name: key, value }));
+  }
+  return [];
+}
+
+function fieldMap(item) {
+  const result = new Map();
+  for (const field of fieldEntries(item)) {
+    if (field.key) result.set(field.key, field.value);
+    if (field.name) result.set(field.name, field.value);
   }
   return result;
 }
@@ -125,6 +133,112 @@ function actorFromValue(value, fallback) {
   };
 }
 
+const DETAIL_FIELD_NAMES = new Map([
+  ["需求背景", "需求背景"],
+  ["requirement_background", "需求背景"],
+  ["需求详述", "需求详述"],
+  ["requirement_detail", "需求详述"],
+  ["requirement_details", "需求详述"],
+  ["性能要求", "性能要求"],
+  ["performance_requirement", "性能要求"],
+  ["performance_requirements", "性能要求"],
+]);
+
+function detailFieldName(field) {
+  return DETAIL_FIELD_NAMES.get(field.name) ?? DETAIL_FIELD_NAMES.get(field.key) ?? null;
+}
+
+function isEmptyDetailTemplate(value) {
+  if (!value) return false;
+  const remaining = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\d+[.、]\s*[^：:]+[：:]?$/.test(line));
+  return remaining.length === 0;
+}
+
+function httpUrl(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function markdownLinkLabel(value, fallback) {
+  return limitedString(
+    value?.display_name ?? value?.name ?? value?.filename ?? value?.file_name ?? value?.title,
+    fallback,
+    240,
+  ).replaceAll("[", "\\[").replaceAll("]", "\\]");
+}
+
+function markdownLinks(value, fallbackLabel) {
+  const links = [];
+  function append(label, url) {
+    if (!url || links.some((link) => link.url === url)) return;
+    links.push({ label, url });
+  }
+  function visit(candidate) {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    if (typeof candidate === "string") {
+      append(fallbackLabel, httpUrl(candidate));
+      return;
+    }
+    if (!candidate || typeof candidate !== "object") return;
+    const url = httpUrl(
+      candidate.url
+        ?? candidate.href
+        ?? candidate.link
+        ?? candidate.file_url
+        ?? candidate.fileUrl
+        ?? candidate.download_url
+        ?? candidate.downloadUrl,
+    );
+    append(markdownLinkLabel(candidate, fallbackLabel), url);
+    for (const nested of Object.values(candidate)) visit(nested);
+  }
+  visit(value);
+  return links.map((link) => `- [${link.label}](${link.url})`);
+}
+
+function normalizedDescription(item, fields) {
+  const baseDescription = readableValue(fieldValue(
+    item,
+    fields,
+    "description",
+    "requirement_description",
+    "需求描述",
+  ));
+  const sections = [];
+  let hasDetailSection = false;
+  for (const field of fieldEntries(item)) {
+    const detailName = detailFieldName(field);
+    if (detailName) {
+      const value = readableValue(field.value);
+      if (value) {
+        sections.push(`## ${detailName}\n\n${value}`);
+        hasDetailSection = true;
+      }
+      continue;
+    }
+    const links = markdownLinks(field.value, field.name || "相关链接");
+    if (links.length > 0) {
+      sections.push(`## ${field.name || "相关链接"}\n\n${links.join("\n")}`);
+    }
+  }
+  const preservedBase = hasDetailSection && isEmptyDetailTemplate(baseDescription)
+    ? ""
+    : baseDescription;
+  return [preservedBase, ...sections].filter(Boolean).join("\n\n");
+}
+
 function normalizeWorkItem(item, view, index, projectId) {
   const id = workItemId(item);
   if (!id) throw new ApiError(502, "INVALID_FEISHU_RESPONSE", "飞书项目返回的需求缺少工作项 ID");
@@ -152,13 +266,7 @@ function normalizeWorkItem(item, view, index, projectId) {
     "role_owners",
     "负责人",
   );
-  const description = readableValue(fieldValue(
-    item,
-    fields,
-    "description",
-    "requirement_description",
-    "需求描述",
-  ));
+  const description = normalizedDescription(item, fields);
   const statusLabel = readableValue(statusValue);
   const externalOrigin = `feishu-project:${projectId}:${view.host}/${view.simpleName}`;
   return {
