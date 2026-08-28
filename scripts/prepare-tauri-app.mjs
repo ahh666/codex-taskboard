@@ -80,9 +80,9 @@ function parseTarget(argv) {
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `${command} exited with ${result.status}`);
+    throw new Error(String(result.stderr ?? "").trim() || `${command} exited with ${result.status}`);
   }
-  return result.stdout.trim();
+  return String(result.stdout ?? "").trim();
 }
 
 async function exists(targetPath) {
@@ -238,7 +238,10 @@ async function prepareMeegleCliRuntime() {
   const destination = path.join(extractionDirectory, "meegle-package");
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
-  run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
+  const tarCommand = target === windowsTarget
+    ? path.join(process.env.SystemRoot, "System32", "tar.exe")
+    : "/usr/bin/tar";
+  run(tarCommand, ["-xzf", archivePath, "-C", destination]);
   const binDirectory = path.join(resourcesDirectory, "bin");
   const licensesDirectory = path.join(resourcesDirectory, "licenses");
   await mkdir(binDirectory, { recursive: true });
