@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import QRCode from "qrcode";
+
 import { ApiError } from "./database.mjs";
 
 const PROFILE_NAME = "taskboard";
@@ -276,10 +278,15 @@ export function createFeishuCli({
       "--phase", "init",
       "--host", host,
     ]));
+    const authorizationQrCode = await QRCode.toDataURL(normalized.authorizationUrl, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 320,
+    });
     const publicAuthorization = {
       state: "pending",
       authorizationUrl: normalized.authorizationUrl,
-      authorizationQrCode: null,
+      authorizationQrCode,
       authorizationExpiresAt: normalized.expiresAt,
     };
     authorization = { ...normalized, public: publicAuthorization };
