@@ -356,6 +356,8 @@ export function createFeishuCli({
       "workitem", "+batch-get",
       "--project-key", view.simpleName,
       "--work-item-ids", ids.join(","),
+      "--fields", "_all",
+      "--params", JSON.stringify({ page_size: 200 }),
     ], { timeoutMs: Math.max(COMMAND_TIMEOUT_MS, ids.length * 2_000) });
     const detailsById = new Map(recordArray(details).flatMap((result) => {
       const detail = result?.data && typeof result.data === "object" ? result.data : result;
