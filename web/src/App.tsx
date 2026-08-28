@@ -3207,18 +3207,14 @@ export function App() {
 
   async function authorizeFeishu() {
     if (feishuSaving) return;
-    const authorizationWindow = window.open("", "feishu-taskboard-oauth", "popup,width=560,height=720");
     setFeishuSaving(true);
     setFeishuError(null);
     try {
       const authorization = await startFeishuAuthorization(selectedProjectId);
-      if (authorizationWindow && authorization.authorizationUrl) authorizationWindow.location.href = authorization.authorizationUrl;
-      else if (authorization.authorizationUrl) window.open(authorization.authorizationUrl, "_blank", "noopener");
       setFeishuConnection(authorization);
-      setAnnouncement(text("请扫码或打开飞书授权页完成授权", "Scan the QR code or open Feishu to authorize"));
+      setAnnouncement(text("请使用飞书移动端扫描二维码完成授权", "Scan the QR code with Feishu to authorize"));
       void pollFeishuAuthorization();
     } catch (error) {
-      authorizationWindow?.close();
       setFeishuError(errorMessage(error));
     } finally {
       setFeishuSaving(false);

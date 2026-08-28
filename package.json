@@ -50,6 +50,7 @@
     "mdast-util-definitions": "^6.0.0",
     "mermaid": "^11.16.1",
     "micromark-util-decode-string": "^2.0.1",
+    "qrcode": "1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
