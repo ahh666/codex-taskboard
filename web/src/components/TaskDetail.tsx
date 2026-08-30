@@ -912,6 +912,7 @@ export function TaskDetail({
           await Promise.allSettled(
             [...inlineAttachments, ...fileAttachments].map((attachment) => deleteAttachment(attachment)),
           );
+          nextComment = comment;
           setCommentsError(messageFor(error));
         }
       }

@@ -67,6 +67,7 @@ test("comment posting keeps the created comment visible when an attachment uploa
   assert.match(detailSource, /附件上传失败/);
   assert.match(detailSource, /removePendingInlineTokens/);
   assert.match(detailSource, /const initialCommentBody = removePendingInlineTokens\([\s\S]*createComment\(task\.id, initialCommentBody\)/);
+  assert.match(detailSource, /commentUpdateFailed = true;[\s\S]*nextComment = comment;/);
   assert.match(detailSource, /nextComment: Comment =/);
 });
 
