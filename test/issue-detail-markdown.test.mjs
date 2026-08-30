@@ -61,6 +61,12 @@ test("issue detail safely hides Markdown comments and renders Mermaid diagrams l
   assert.doesNotMatch(markdownSource, /rehypeRaw/);
 });
 
+test("comment posting keeps the created comment visible when an attachment upload fails", () => {
+  assert.match(detailSource, /Promise\.allSettled/);
+  assert.match(detailSource, /setComments\(\(current\) => \[\.\.\.current, nextComment\]\)/);
+  assert.match(detailSource, /附件上传失败/);
+});
+
 test("issue detail keeps ordinary code blocks and the Mermaid fallback readable in both themes", () => {
   assert.match(markdownSource, /language === "mermaid"/);
   assert.match(markdownSource, /return <pre \{\.\.\.props\}>\{children\}<\/pre>/);

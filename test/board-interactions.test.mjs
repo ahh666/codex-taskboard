@@ -165,6 +165,15 @@ test("comments upload and render their own attachments in the content flow", () 
   assert.match(composerSource, /className="inline-media-attachment"/);
 });
 
+test("issue details keep ordinary task attachments reachable", () => {
+  assert.match(apiSource, /export async function deleteAttachment/);
+  assert.match(detailSource, /async function uploadFiles\(files: FileList\)/);
+  assert.match(detailSource, /className="attachment-add-button"/);
+  assert.match(detailSource, /className="attachment-list"/);
+  assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
+  assert.match(detailSource, /className="comment-attachment-list"/);
+});
+
 test("issue creation and detail share one searchable, creatable label picker", () => {
   assert.match(editorSource, /<LabelPicker/);
   assert.match(detailSource, /<LabelPicker/);

@@ -30,6 +30,9 @@ test("all four issue composers request candidates with the owning project and su
   );
   assert.equal(detailSource.match(/surface: "comment"/g)?.length, 2);
   assert.match(appSource, /projectId=\{editorProjectId\}/);
+  assert.match(detailSource, /codexProjectId: codexProjectIdentity\?\.codexProjectId/);
+  assert.match(detailSource, /codexHostId: codexProjectIdentity\?\.codexHostId/);
+  assert.match(appSource, /codexProjectIdentity=\{selectedCodexProjectIdentity\}/);
 });
 
 test("task composer document converts only durable references and keeps slash and legacy syntax as text", () => {

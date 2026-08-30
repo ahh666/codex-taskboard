@@ -1,4 +1,5 @@
 const memoryStorage = new Map<string, string>();
+const PROJECT_BOARD_DISPLAY_SETTINGS_LEGACY_KEY = "taskboard.project-board-display-settings.v3";
 export const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
 const RETRY_DELAY_MS = 250;
 const MAX_RETRY_DELAY_MS = 5_000;
@@ -65,6 +66,25 @@ function persist(key: string, value: string | null) {
   });
 }
 
+function migrateProjectBoardDisplaySettings() {
+  const raw = localStorageBackend?.getItem(PROJECT_BOARD_DISPLAY_SETTINGS_LEGACY_KEY)
+    ?? memoryStorage.get(PROJECT_BOARD_DISPLAY_SETTINGS_LEGACY_KEY);
+  if (!raw) return;
+  try {
+    const legacySettings = JSON.parse(raw) as Record<string, unknown>;
+    for (const [projectId, settings] of Object.entries(legacySettings)) {
+      if (!projectId || !settings || typeof settings !== "object" || Array.isArray(settings)) continue;
+      const key = `${PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX}${projectId}`;
+      if (memoryStorage.has(key)) continue;
+      const value = JSON.stringify(settings);
+      memoryStorage.set(key, value);
+      persist(key, value);
+    }
+  } catch {
+    // Leave malformed legacy data untouched.
+  }
+}
+
 export async function initializeTaskboardStorage() {
   try {
     localStorageBackend = window.localStorage;
@@ -72,6 +92,7 @@ export async function initializeTaskboardStorage() {
     localStorageBackend = null;
   }
   await refreshServerStorage();
+  migrateProjectBoardDisplaySettings();
 }
 
 export async function refreshProjectBoardDisplaySettingsStorage() {

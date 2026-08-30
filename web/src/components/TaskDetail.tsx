@@ -12,6 +12,7 @@ import {
   ApiError,
   attachmentDownloadUrl,
   createComment,
+  deleteAttachment,
   deleteComment,
   getTask,
   listAttachments,
@@ -33,6 +34,7 @@ import type {
   ActorIdentity,
   Attachment,
   Comment,
+  CodexProjectIdentity,
   CodexThreadBinding,
   DevelopmentContext,
   DevelopmentScan,
@@ -97,6 +99,7 @@ import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
 import copyIdIcon from "../assets/figma-taskboard/copy-id.svg";
 import copyLinkIcon from "../assets/figma-taskboard/copy-link.svg";
 import { DescriptionDocument } from "./DescriptionDocument";
+import { MAX_ATTACHMENT_SIZE } from "./PendingAttachments";
 
 type TaskDetailError = string | readonly [string, string];
 
@@ -104,6 +107,7 @@ interface TaskDetailProps {
   task: Task;
   tasks: Task[];
   referenceTasks: Task[];
+  codexProjectIdentity: CodexProjectIdentity | null;
   currentUser: ActorIdentity;
   availableLabels: string[];
   developmentScan: DevelopmentScan;
@@ -174,6 +178,16 @@ function resizeTextarea(element: HTMLTextAreaElement | null) {
   if (!element) return;
   element.style.height = "0px";
   element.style.height = `${element.scrollHeight}px`;
+}
+
+function fileSize(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function attachmentIsReferenced(value: string, attachment: Attachment): boolean {
+  return value.includes(`attachments/${encodeURIComponent(attachment.id)}/`);
 }
 
 async function downloadAttachmentFile(attachment: Attachment) {
@@ -373,6 +387,7 @@ export function TaskDetail({
   task,
   tasks,
   referenceTasks,
+  codexProjectIdentity,
   currentUser,
   availableLabels,
   developmentScan,
@@ -406,6 +421,9 @@ export function TaskDetail({
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachmentsError, setAttachmentsError] = useState<TaskDetailError | null>(null);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [pendingAttachmentDelete, setPendingAttachmentDelete] = useState<Attachment | null>(null);
+  const [deletingAttachment, setDeletingAttachment] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [taskActivities, setTaskActivities] = useState<TaskChangeActivity[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
@@ -434,6 +452,7 @@ export function TaskDetail({
   const editingComposerRef = useRef<InlineMediaComposerHandle>(null);
   const editingCommentScrollPositionRef = useRef<{ element: HTMLElement; top: number } | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const taskAttachmentInputRef = useRef<HTMLInputElement>(null);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editCommentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editingUploadedAttachmentsRef = useRef<Map<string, Attachment>>(new Map());
@@ -829,24 +848,49 @@ export function TaskDetail({
     setCommentsError(null);
     try {
       const comment = await createComment(task.id, body);
-      const [inlineAttachments, fileAttachments] = await Promise.all([
-        Promise.all(
+      const [inlineResults, fileResults] = await Promise.all([
+        Promise.allSettled(
           commentInlineImages.map((image) => uploadCommentAttachment(comment.id, image.file, "inline")),
         ),
-        Promise.all(
+        Promise.allSettled(
           commentInlineFiles.map((file) => uploadCommentAttachment(comment.id, file.file, "attachment")),
         ),
       ]);
-      const nextComment = commentInlineImages.length > 0 || commentInlineFiles.length > 0
-        ? await updateComment(
-            comment,
-            resolveInlineAttachmentMarkdown(
-              resolveInlineMediaMarkdown(body, commentInlineImages, inlineAttachments),
-              commentInlineFiles,
-              fileAttachments,
-            ),
-          )
-        : comment;
+      const inlineAttachments = inlineResults.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
+      const fileAttachments = fileResults.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
+      const failedUploads = [...inlineResults, ...fileResults].filter(
+        (result) => result.status === "rejected",
+      ).length;
+      let nextComment: Comment = {
+        ...comment,
+        attachments: [...comment.attachments, ...inlineAttachments, ...fileAttachments],
+      };
+      const resolvedBody = fileResults.reduce((value, result, index) => (
+        result.status === "fulfilled"
+          ? resolveInlineAttachmentMarkdown(value, [commentInlineFiles[index]], [result.value])
+          : value
+      ), inlineResults.reduce((value, result, index) => (
+        result.status === "fulfilled"
+          ? resolveInlineMediaMarkdown(value, [commentInlineImages[index]], [result.value])
+          : value
+      ), body));
+      if (inlineAttachments.length > 0 || fileAttachments.length > 0) {
+        try {
+          nextComment = await updateComment(comment, resolvedBody);
+        } catch (error) {
+          setCommentsError(messageFor(error));
+        }
+      }
+      if (failedUploads > 0) {
+        setCommentsError([
+          `评论已发布，但有 ${failedUploads} 个附件上传失败。`,
+          `The comment was posted, but ${failedUploads} attachment upload${failedUploads === 1 ? "" : "s"} failed.`,
+        ]);
+      }
       setComments((current) => [...current, nextComment]);
       setCommentSegments(createInlineMediaSegments());
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
@@ -950,6 +994,54 @@ export function TaskDetail({
     }
   }
 
+  async function uploadFiles(files: FileList) {
+    const selected = Array.from(files);
+    if (selected.length === 0 || uploadingAttachments) return;
+    const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_SIZE);
+    if (oversized) {
+      setAttachmentsError([
+        `“${oversized.name}” 超过 25 MB，无法上传。`,
+        `“${oversized.name}” is larger than 25 MB and cannot be uploaded.`,
+      ]);
+      if (taskAttachmentInputRef.current) taskAttachmentInputRef.current.value = "";
+      return;
+    }
+    setUploadingAttachments(true);
+    setAttachmentsError(null);
+    try {
+      for (const file of selected) {
+        const attachment = await uploadAttachment(currentTask.id, file, "attachment");
+        setAttachments((current) => current.some((item) => item.id === attachment.id)
+          ? current
+          : [...current, attachment]);
+      }
+    } catch (error) {
+      setAttachmentsError(messageFor(error));
+    } finally {
+      setUploadingAttachments(false);
+      if (taskAttachmentInputRef.current) taskAttachmentInputRef.current.value = "";
+    }
+  }
+
+  async function confirmAttachmentDelete() {
+    if (!pendingAttachmentDelete || deletingAttachment) return;
+    setDeletingAttachment(true);
+    setAttachmentsError(null);
+    try {
+      await deleteAttachment(pendingAttachmentDelete);
+      setAttachments((current) => current.filter((attachment) => attachment.id !== pendingAttachmentDelete.id));
+      setComments((current) => current.map((comment) => ({
+        ...comment,
+        attachments: comment.attachments.filter((attachment) => attachment.id !== pendingAttachmentDelete.id),
+      })));
+      setPendingAttachmentDelete(null);
+    } catch (error) {
+      setAttachmentsError(messageFor(error));
+    } finally {
+      setDeletingAttachment(false);
+    }
+  }
+
   async function confirmDelete() {
     if (!pendingDelete || deleting) return;
     const removedMentionIds = mentionTaskIds(
@@ -996,6 +1088,9 @@ export function TaskDetail({
     .filter((actor, index, actors) => (
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
+  const visibleTaskAttachments = attachments.filter((attachment) => (
+    attachment.kind === "attachment" && !attachmentIsReferenced(description, attachment)
+  ));
   const activityTimeline = [
     ...taskActivities.flatMap((activity) => activity.changes.map((change, index) => ({
       kind: "change" as const,
@@ -1065,6 +1160,10 @@ export function TaskDetail({
                       completionContext={{
                         projectId: currentTask.projectId,
                         surface: "issue-description",
+                        codexProjectId: codexProjectIdentity?.codexProjectId,
+                        codexProjectKind: codexProjectIdentity?.codexProjectKind,
+                        codexHostId: codexProjectIdentity?.codexHostId,
+                        workspacePath: codexProjectIdentity?.workspacePath,
                       }}
                       placeholder={text("添加描述…", "Add description…")}
                       ariaLabel={text("议题描述", "Issue description")}
@@ -1194,6 +1293,78 @@ export function TaskDetail({
                   </div>
                 )}
               </div>
+              <div className="attachments-heading issue-attachment-controls">
+                {visibleTaskAttachments.length > 0 && (
+                  <div>
+                    <h2 id="attachments-heading">{text("附件", "Attachments")}</h2>
+                    <span>{visibleTaskAttachments.length}</span>
+                  </div>
+                )}
+                <button
+                  className="attachment-add-button"
+                  type="button"
+                  disabled={isFeishuTask || uploadingAttachments}
+                  onClick={() => taskAttachmentInputRef.current?.click()}
+                >
+                  <AttachmentIcon color="currentColor" />
+                  {uploadingAttachments
+                    ? text("上传中…", "Uploading…")
+                    : text("添加附件", "Add attachment")}
+                </button>
+                <input
+                  ref={taskAttachmentInputRef}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    if (event.currentTarget.files) void uploadFiles(event.currentTarget.files);
+                  }}
+                />
+              </div>
+              {visibleTaskAttachments.length > 0 && (
+                <section className="issue-attachments" aria-labelledby="attachments-heading">
+                  <ul className="attachment-list">
+                    {visibleTaskAttachments.map((attachment) => (
+                      <li key={attachment.id}>
+                        <a
+                          className="attachment-link"
+                          href={attachmentDownloadUrl(attachment)}
+                          download={attachment.filename}
+                          title={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
+                          onClick={(event) => handleAttachmentDownload(event, attachment)}
+                        >
+                          <span className="attachment-file-icon" aria-hidden="true">
+                            <LinearIcon name="file" />
+                          </span>
+                          <span className="attachment-copy">
+                            <strong>{attachment.filename}</strong>
+                            <span>{fileSize(attachment.size)} · {relativeTime(attachment.createdAt, locale)}</span>
+                          </span>
+                        </a>
+                        <div className="attachment-actions">
+                          <a
+                            href={attachmentDownloadUrl(attachment)}
+                            download={attachment.filename}
+                            aria-label={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
+                            title={text("下载附件", "Download attachment")}
+                            onClick={(event) => handleAttachmentDownload(event, attachment)}
+                          >
+                            <LinearIcon name="openExternal" />
+                          </a>
+                          <button
+                            type="button"
+                            aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
+                            title={text("删除附件", "Delete attachment")}
+                            onClick={() => setPendingAttachmentDelete(attachment)}
+                          >
+                            <DeleteIcon color="currentColor" />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               {attachmentsError && (
                 <div className="attachments-error" role="alert">
                   {typeof attachmentsError === "string"
@@ -1385,6 +1556,10 @@ export function TaskDetail({
                             completionContext={{
                               projectId: currentTask.projectId,
                               surface: "comment",
+                              codexProjectId: codexProjectIdentity?.codexProjectId,
+                              codexProjectKind: codexProjectIdentity?.codexProjectKind,
+                              codexHostId: codexProjectIdentity?.codexHostId,
+                              workspacePath: codexProjectIdentity?.workspacePath,
                             }}
                             placeholder={text("编辑评论", "Edit comment")}
                             ariaLabel={text("编辑评论", "Edit comment")}
@@ -1466,6 +1641,41 @@ export function TaskDetail({
                           </div>
                         )
                       )}
+                      {comment.attachments.some((attachment) => (
+                        attachment.kind === "attachment" && !attachmentIsReferenced(comment.body, attachment)
+                      )) && (
+                        <ul className="comment-attachment-list" aria-label={text("评论附件", "Comment attachments")}>
+                          {comment.attachments
+                            .filter((attachment) => (
+                              attachment.kind === "attachment" && !attachmentIsReferenced(comment.body, attachment)
+                            ))
+                            .map((attachment) => (
+                              <li key={attachment.id}>
+                                <a
+                                  href={attachmentDownloadUrl(attachment)}
+                                  download={attachment.filename}
+                                  title={text(`下载 ${attachment.filename}`, `Download ${attachment.filename}`)}
+                                  onClick={(event) => handleAttachmentDownload(event, attachment)}
+                                >
+                                  <span className="attachment-file-icon" aria-hidden="true">
+                                    <LinearIcon name="file" />
+                                  </span>
+                                  <span><strong>{attachment.filename}</strong><small>{fileSize(attachment.size)}</small></span>
+                                </a>
+                                {editingId !== comment.id && (
+                                  <button
+                                    type="button"
+                                    aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
+                                    title={text("删除附件", "Delete attachment")}
+                                    onClick={() => setPendingAttachmentDelete(attachment)}
+                                  >
+                                    <DeleteIcon color="currentColor" />
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                        </ul>
+                      )}
                       {(comment.threadBinding || comment.legacyLocalThreadId) && (
                         <div className="comment-conversation-link">
                           <ConversationLink
@@ -1508,6 +1718,10 @@ export function TaskDetail({
                   completionContext={{
                     projectId: currentTask.projectId,
                     surface: "comment",
+                    codexProjectId: codexProjectIdentity?.codexProjectId,
+                    codexProjectKind: codexProjectIdentity?.codexProjectKind,
+                    codexHostId: codexProjectIdentity?.codexHostId,
+                    workspacePath: codexProjectIdentity?.workspacePath,
                   }}
                   placeholder={text("留下评论…", "Leave a comment…")}
                   ariaLabel={text("留下评论", "Leave a comment")}
@@ -1857,6 +2071,24 @@ export function TaskDetail({
             <div>
               <button className="button secondary" type="button" disabled={deleting} onClick={() => setPendingDelete(null)}>{text("取消", "Cancel")}</button>
               <button className="button danger" type="button" disabled={deleting} onClick={() => void confirmDelete()}>{deleting ? text("删除中…", "Deleting…") : text("删除评论", "Delete comment")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingAttachmentDelete && (
+        <div className="delete-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !deletingAttachment) setPendingAttachmentDelete(null);
+        }}>
+          <div className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-attachment-title">
+            <h2 id="delete-attachment-title">{text("删除这个附件？", "Delete this attachment?")}</h2>
+            <p>{text(
+              `“${pendingAttachmentDelete.filename}” 将被永久删除，此操作无法撤销。`,
+              `“${pendingAttachmentDelete.filename}” will be permanently deleted. This action cannot be undone.`,
+            )}</p>
+            <div>
+              <button className="button secondary" type="button" disabled={deletingAttachment} onClick={() => setPendingAttachmentDelete(null)}>{text("取消", "Cancel")}</button>
+              <button className="button danger" type="button" disabled={deletingAttachment} onClick={() => void confirmAttachmentDelete()}>{deletingAttachment ? text("删除中…", "Deleting…") : text("删除附件", "Delete attachment")}</button>
             </div>
           </div>
         </div>

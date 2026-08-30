@@ -3819,6 +3819,7 @@ export function App() {
             task={detailTask}
             tasks={tasks.filter((task) => task.projectId === detailTask.projectId)}
             referenceTasks={referenceTasks.filter((task) => task.projectId === detailTask.projectId)}
+            codexProjectIdentity={selectedCodexProjectIdentity}
             currentUser={currentUser}
             availableLabels={availableLabels}
             developmentScan={developmentScan}

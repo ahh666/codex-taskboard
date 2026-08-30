@@ -44,6 +44,7 @@ import type {
   ComposerCandidatesResponse,
   ComposerSurface,
   ComposerTrigger,
+  CodexProjectIdentity,
   Task,
 } from "../types";
 import {
@@ -167,7 +168,7 @@ export interface InlineMediaComposerHandle {
   addFiles: (files: FileList | File[]) => void;
 }
 
-export interface InlineMediaCompletionContext {
+export interface InlineMediaCompletionContext extends Partial<CodexProjectIdentity> {
   projectId?: string;
   threadId?: string;
   surface: Exclude<ComposerSurface, "ai-chat">;
@@ -2505,6 +2506,10 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         surface: completionContext.surface,
         trigger: completionQuery.trigger,
         query: completionQuery.query,
+        codexProjectId: completionContext.codexProjectId,
+        codexProjectKind: completionContext.codexProjectKind,
+        codexHostId: completionContext.codexHostId,
+        workspacePath: completionContext.workspacePath,
       }, controller.signal).then((response) => {
         if (requestSequence.current !== sequence) return;
         setCompletionResponse(response);
@@ -2520,8 +2525,12 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
       return () => controller.abort();
     }, [
       completionContext?.projectId,
+      completionContext?.codexProjectId,
+      completionContext?.codexProjectKind,
+      completionContext?.codexHostId,
       completionContext?.surface,
       completionContext?.threadId,
+      completionContext?.workspacePath,
       completionQuery?.query,
       completionQuery?.trigger,
       text,
