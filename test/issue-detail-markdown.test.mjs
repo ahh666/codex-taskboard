@@ -65,6 +65,17 @@ test("comment posting keeps the created comment visible when an attachment uploa
   assert.match(detailSource, /Promise\.allSettled/);
   assert.match(detailSource, /setComments\(\(current\) => \[\.\.\.current, nextComment\]\)/);
   assert.match(detailSource, /附件上传失败/);
+  assert.match(detailSource, /removePendingInlineTokens/);
+  assert.match(detailSource, /const initialCommentBody = removePendingInlineTokens\([\s\S]*createComment\(task\.id, initialCommentBody\)/);
+  assert.match(detailSource, /nextComment: Comment =/);
+});
+
+test("description attachment batches roll back successful uploads when another upload fails", () => {
+  assert.match(detailSource, /Promise\.allSettled/);
+  assert.match(detailSource, /deleteAttachment\(attachment\)/);
+  assert.match(detailSource, /uploadedAttachments\.map/);
+  assert.match(detailSource, /inlineResults\.flatMap/);
+  assert.match(detailSource, /fileResults\.flatMap/);
 });
 
 test("issue detail keeps ordinary code blocks and the Mermaid fallback readable in both themes", () => {

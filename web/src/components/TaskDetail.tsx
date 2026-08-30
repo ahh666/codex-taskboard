@@ -190,6 +190,14 @@ function attachmentIsReferenced(value: string, attachment: Attachment): boolean 
   return value.includes(`attachments/${encodeURIComponent(attachment.id)}/`);
 }
 
+function removePendingInlineTokens(value: string, images: InlineMediaSegment[], files: InlineMediaSegment[]): string {
+  return [...images, ...files].reduce((result, segment) => (
+    segment.type === "pending-image" || segment.type === "pending-attachment"
+      ? result.replaceAll(segment.token, "")
+      : result
+  ), value).replace(/\n{3,}/g, "\n\n").trim();
+}
+
 async function downloadAttachmentFile(attachment: Attachment) {
   const host = new URL(document.baseURI).searchParams.get("host");
   if (host === "codex" && window.parent !== window) {
@@ -794,12 +802,26 @@ export function TaskDetail({
     setSavingProperty("description");
     onError(null);
     try {
-      const uploadedImages = await Promise.all(
-        inlineImages.map((image) => uploadAttachment(currentTask.id, image.file, "inline")),
-      );
-      const uploadedFiles = await Promise.all(
-        inlineFiles.map((file) => uploadAttachment(currentTask.id, file.file, "attachment")),
-      );
+      const [inlineResults, fileResults] = await Promise.all([
+        Promise.allSettled(
+          inlineImages.map((image) => uploadAttachment(currentTask.id, image.file, "inline")),
+        ),
+        Promise.allSettled(
+          inlineFiles.map((file) => uploadAttachment(currentTask.id, file.file, "attachment")),
+        ),
+      ]);
+      const uploadedImages = inlineResults.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
+      const uploadedFiles = fileResults.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
+      const uploadedAttachments = [...uploadedImages, ...uploadedFiles];
+      if ([...inlineResults, ...fileResults].some((result) => result.status === "rejected")) {
+        await Promise.allSettled(uploadedAttachments.map((attachment) => deleteAttachment(attachment)));
+        onError(["描述附件上传失败，未保存描述。", "Description attachments failed to upload; the description was not saved."]);
+        return;
+      }
       const resolvedDescription = resolveInlineAttachmentMarkdown(
         resolveInlineMediaMarkdown(
           draftDescription,
@@ -847,7 +869,8 @@ export function TaskDetail({
     setSubmitting(true);
     setCommentsError(null);
     try {
-      const comment = await createComment(task.id, body);
+      const initialCommentBody = removePendingInlineTokens(body, commentInlineImages, commentInlineFiles);
+      const comment = await createComment(task.id, initialCommentBody);
       const [inlineResults, fileResults] = await Promise.all([
         Promise.allSettled(
           commentInlineImages.map((image) => uploadCommentAttachment(comment.id, image.file, "inline")),
@@ -865,10 +888,6 @@ export function TaskDetail({
       const failedUploads = [...inlineResults, ...fileResults].filter(
         (result) => result.status === "rejected",
       ).length;
-      let nextComment: Comment = {
-        ...comment,
-        attachments: [...comment.attachments, ...inlineAttachments, ...fileAttachments],
-      };
       const resolvedBody = fileResults.reduce((value, result, index) => (
         result.status === "fulfilled"
           ? resolveInlineAttachmentMarkdown(value, [commentInlineFiles[index]], [result.value])
@@ -878,14 +897,25 @@ export function TaskDetail({
           ? resolveInlineMediaMarkdown(value, [commentInlineImages[index]], [result.value])
           : value
       ), body));
-      if (inlineAttachments.length > 0 || fileAttachments.length > 0) {
+      const cleanedBody = removePendingInlineTokens(resolvedBody, commentInlineImages, commentInlineFiles);
+      let nextComment: Comment = {
+        ...comment,
+        body: comment.body,
+        attachments: [...comment.attachments, ...inlineAttachments, ...fileAttachments],
+      };
+      let commentUpdateFailed = false;
+      if (cleanedBody !== comment.body) {
         try {
-          nextComment = await updateComment(comment, resolvedBody);
+          nextComment = await updateComment(comment, cleanedBody);
         } catch (error) {
+          commentUpdateFailed = true;
+          await Promise.allSettled(
+            [...inlineAttachments, ...fileAttachments].map((attachment) => deleteAttachment(attachment)),
+          );
           setCommentsError(messageFor(error));
         }
       }
-      if (failedUploads > 0) {
+      if (failedUploads > 0 && !commentUpdateFailed) {
         setCommentsError([
           `评论已发布，但有 ${failedUploads} 个附件上传失败。`,
           `The comment was posted, but ${failedUploads} attachment upload${failedUploads === 1 ? "" : "s"} failed.`,

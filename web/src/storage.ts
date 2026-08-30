@@ -91,7 +91,12 @@ export async function initializeTaskboardStorage() {
   } catch {
     localStorageBackend = null;
   }
-  await refreshServerStorage();
+  try {
+    await refreshServerStorage();
+  } catch (error) {
+    if (!localStorageBackend) throw error;
+    console.error(error);
+  }
   migrateProjectBoardDisplaySettings();
 }
 

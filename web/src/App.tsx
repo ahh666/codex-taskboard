@@ -1139,6 +1139,13 @@ export function App() {
   const detailTask = detailTaskIdentifier
     ? referenceTasks.find((task) => task.identifier === detailTaskIdentifier) ?? null
     : null;
+  const detailCodexProjectIdentity = useMemo(() => {
+    if (!detailTask || !selectedCodexProjectIdentity) return selectedCodexProjectIdentity;
+    if (selectedCodexProjectIdentity.codexProjectKind !== "remote") {
+      return selectedCodexProjectIdentity;
+    }
+    return remoteIdentityForTask(detailTask, selectedCodexProjectIdentity);
+  }, [detailTask, hostContext, selectedCodexProjectIdentity]);
   const detailTaskId = detailTask?.id ?? null;
   const contextMenuTask = contextMenu
     ? tasks.find((task) => task.id === contextMenu.taskId) ?? null
@@ -3819,7 +3826,7 @@ export function App() {
             task={detailTask}
             tasks={tasks.filter((task) => task.projectId === detailTask.projectId)}
             referenceTasks={referenceTasks.filter((task) => task.projectId === detailTask.projectId)}
-            codexProjectIdentity={selectedCodexProjectIdentity}
+            codexProjectIdentity={detailCodexProjectIdentity}
             currentUser={currentUser}
             availableLabels={availableLabels}
             developmentScan={developmentScan}

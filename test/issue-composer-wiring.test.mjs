@@ -32,7 +32,8 @@ test("all four issue composers request candidates with the owning project and su
   assert.match(appSource, /projectId=\{editorProjectId\}/);
   assert.match(detailSource, /codexProjectId: codexProjectIdentity\?\.codexProjectId/);
   assert.match(detailSource, /codexHostId: codexProjectIdentity\?\.codexHostId/);
-  assert.match(appSource, /codexProjectIdentity=\{selectedCodexProjectIdentity\}/);
+  assert.match(appSource, /codexProjectIdentity=\{detailCodexProjectIdentity\}/);
+  assert.match(appSource, /detailCodexProjectIdentity = useMemo\([\s\S]*remoteIdentityForTask/);
 });
 
 test("task composer document converts only durable references and keeps slash and legacy syntax as text", () => {

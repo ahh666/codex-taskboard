@@ -9,4 +9,5 @@ test("display settings migrate the legacy aggregate key into per-project entries
   assert.match(storageSource, /PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX/);
   assert.match(storageSource, /initializeTaskboardStorage[\s\S]*migrat/);
   assert.match(storageSource, /projectBoardDisplaySettingsStorageEntries/);
+  assert.match(storageSource, /catch \(error\)[\s\S]*localStorageBackend/);
 });
