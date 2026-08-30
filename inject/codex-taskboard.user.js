@@ -430,11 +430,11 @@
 
   function requestNativeFetch(path, body) {
     const bridge = window.electronBridge;
-    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(null);
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(undefined);
     return new Promise((resolve) => {
       const requestId = `taskboard-native-fetch-${crypto.randomUUID()}`;
       let settled = false;
-      const finish = (value = null) => {
+      const finish = (value) => {
         if (settled) return;
         settled = true;
         window.clearTimeout(timeout);
@@ -449,13 +449,17 @@
           || message.type !== "fetch-response"
           || message.requestId !== requestId
         ) return;
+        if (!Number.isInteger(message.status) || message.status < 200 || message.status >= 300) {
+          finish(undefined);
+          return;
+        }
         try {
           finish(JSON.parse(message.bodyJsonString || "null"));
         } catch (_) {
-          finish();
+          finish(undefined);
         }
       };
-      const timeout = window.setTimeout(finish, 1_000);
+      const timeout = window.setTimeout(() => finish(undefined), 1_000);
       window.addEventListener("message", onMessage);
       try {
         bridge.sendMessageFromView({
@@ -466,7 +470,7 @@
           body: JSON.stringify(body),
         });
       } catch (_) {
-        finish();
+        finish(undefined);
       }
     });
   }
@@ -486,7 +490,13 @@
         .map((entry) => [entry?.key, entry?.value]),
     );
     const metadata = new Map();
-    const localProjects = entries.get("local-projects");
+    const [currentLocalProjects, currentRemoteProjects] = await Promise.all([
+      requestNativeFetch("get-global-state", { key: "local-projects" }),
+      requestNativeFetch("get-global-state", { key: "remote-projects" }),
+    ]);
+    const localProjects = currentLocalProjects === undefined
+      ? entries.get("local-projects")
+      : currentLocalProjects?.value;
     if (localProjects && typeof localProjects === "object" && !Array.isArray(localProjects)) {
       Object.entries(localProjects).forEach(([projectId, project]) => {
         const id = projectId.trim();
@@ -501,7 +511,9 @@
         });
       });
     }
-    const remoteProjects = entries.get("remote-projects");
+    const remoteProjects = currentRemoteProjects === undefined
+      ? entries.get("remote-projects")
+      : currentRemoteProjects?.value;
     if (Array.isArray(remoteProjects)) {
       remoteProjects.forEach((project) => {
         const id = typeof project?.id === "string" ? project.id.trim() : "";
@@ -514,6 +526,9 @@
           projectKind: "remote",
           workspacePath,
           hostId,
+          name: typeof project?.label === "string" && project.label.trim()
+            ? project.label.trim()
+            : id,
         });
       });
     }
@@ -531,9 +546,25 @@
     return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
   }
 
+  async function canonicalNativeRootPaths(roots) {
+    const normalizedRoots = roots.map((root) => normalizeNativeRootPath(root));
+    const response = await requestNativeFetch("workspace-root-options", {
+      hostId: "local",
+      canonicalizeRoots: roots,
+    });
+    const canonicalPathByRoot = response?.canonicalPathByRoot;
+    if (!canonicalPathByRoot || typeof canonicalPathByRoot !== "object") return normalizedRoots;
+    const canonicalRoots = roots.map((root) => (
+      typeof canonicalPathByRoot[root] === "string"
+        ? normalizeNativeRootPath(canonicalPathByRoot[root])
+        : ""
+    ));
+    return canonicalRoots.every(Boolean) ? canonicalRoots : normalizedRoots;
+  }
+
   function readCodexProjects(metadata = codexProjectMetadata) {
     const seen = new Set();
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
+    const projects = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
       .flatMap((row) => {
         const id = row.getAttribute("data-app-action-sidebar-project-id")?.trim();
         const name = (
@@ -545,6 +576,11 @@
         seen.add(id);
         return [{ id, name, ...metadata.get(id) }];
       });
+    for (const [id, project] of metadata) {
+      if (project.projectKind !== "remote" || seen.has(id)) continue;
+      projects.push({ id, ...project });
+    }
+    return projects;
   }
 
   function findProjectsSection() {
@@ -976,9 +1012,20 @@
   async function nativeProjectContext() {
     const bootstrap = await window.electronBridge?.getInitialSidebarBootstrap?.();
     const entries = bootstrap?.globalStateEntries ?? [];
-    const localProjects = entries.find((entry) => entry.key === "local-projects")?.value ?? {};
+    const currentLocalProjects = await requestNativeFetch(
+      "get-global-state",
+      { key: "local-projects" },
+    );
+    const localProjects = currentLocalProjects === undefined
+      ? entries.find((entry) => entry.key === "local-projects")?.value
+      : currentLocalProjects?.value;
+    const projectEntries = localProjects
+      && typeof localProjects === "object"
+      && !Array.isArray(localProjects)
+      ? Object.entries(localProjects)
+      : [];
     return {
-      projects: Object.entries(localProjects).flatMap(([id, project]) => (
+      projects: projectEntries.flatMap(([id, project]) => (
         project && Array.isArray(project.rootPaths)
           ? [{ ...project, id }]
           : []
@@ -989,12 +1036,22 @@
   async function resolveNativeProject(requestedProjectId, workspacePath) {
     const context = await nativeProjectContext();
     const normalizedWorkspacePath = normalizeNativeRootPath(workspacePath);
-    const project = context.projects.find((candidate) => (
-      candidate.id === requestedProjectId
-      || candidate.rootPaths.some((root) => (
-        normalizeNativeRootPath(root) === normalizedWorkspacePath
-      ))
-    )) ?? null;
+    let project = context.projects.find((candidate) => candidate.id === requestedProjectId) ?? null;
+    if (!project && normalizedWorkspacePath) {
+      const projectRoots = context.projects.flatMap((candidate) => candidate.rootPaths.flatMap((root) => (
+        typeof root === "string" && normalizeNativeRootPath(root)
+          ? [{ project: candidate, root }]
+          : []
+      )));
+      const canonicalRoots = await canonicalNativeRootPaths([
+        workspacePath,
+        ...projectRoots.map(({ root }) => root),
+      ]);
+      const matchingRootIndex = canonicalRoots.slice(1).findIndex((root) => (
+        root === canonicalRoots[0]
+      ));
+      if (matchingRootIndex >= 0) project = projectRoots[matchingRootIndex].project;
+    }
     const targetRoot = normalizedWorkspacePath ? workspacePath : project?.rootPaths[0];
     return project && typeof targetRoot === "string" && normalizeNativeRootPath(targetRoot)
       ? { projectId: project.id, targetRoot }
@@ -1018,7 +1075,6 @@
 
   async function waitForNativeProject(projectId, targetRoot) {
     const deadline = Date.now() + 8_000;
-    const normalizedTargetRoot = normalizeNativeRootPath(targetRoot);
     while (Date.now() < deadline) {
       const [selectedProjectId, context] = await Promise.all([
         selectedNativeProjectId(),
@@ -1027,10 +1083,14 @@
       const project = context.projects.find((candidate) => candidate.id === projectId);
       if (
         selectedProjectId === projectId
-        && project?.rootPaths?.some((root) => (
-          normalizeNativeRootPath(root) === normalizedTargetRoot
-        ))
-      ) return projectId;
+        && project?.rootPaths
+      ) {
+        const canonicalRoots = await canonicalNativeRootPaths([
+          targetRoot,
+          ...project.rootPaths.filter((root) => typeof root === "string"),
+        ]);
+        if (canonicalRoots.slice(1).some((root) => root === canonicalRoots[0])) return projectId;
+      }
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     }
     throw new Error(hostText(
@@ -1214,6 +1274,39 @@
     }
   }
 
+  function handleDatePickerRequest(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    const value = typeof payload?.value === "string" ? payload.value : "";
+    const rect = payload?.rect;
+    if (
+      !requestId
+      || !frame
+      || !rect
+      || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+    ) return;
+
+    const frameRect = frame.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "date";
+    input.value = value;
+    input.style.position = "fixed";
+    input.style.left = `${frameRect.left + rect.x}px`;
+    input.style.top = `${frameRect.top + rect.y}px`;
+    input.style.width = `${rect.width}px`;
+    input.style.height = `${rect.height}px`;
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+    document.body.append(input);
+    input.addEventListener("change", () => {
+      postToFrame({
+        type: "taskboard:date-picker-response",
+        payload: { requestId, value: input.value },
+      });
+      input.remove();
+    }, { once: true });
+    input.showPicker();
+  }
+
   function challengeFrameDocument(event) {
     if (!frame || event.currentTarget !== frame) return;
     frameReady = false;
@@ -1270,6 +1363,10 @@
     }
     if (message.type === "taskboard:open-attachment") {
       void handleAttachmentOpen(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:date-picker-request") {
+      handleDatePickerRequest(message.payload);
       return;
     }
     if (message.type === "taskboard:create-thread") void createThreadForTask(message.payload);
@@ -1665,15 +1762,22 @@
   }
 
   function mountActivePage() {
-    if (!active) return;
+    if (!active) return false;
     if (!page) page = createPage();
     const mount = findPageMount();
-    if (!mount) return;
+    if (!mount) return false;
     const { surface } = mount;
 
+    let remounted = false;
     if (page.parentElement !== surface) {
       restoreNativeContent();
       surface.appendChild(page);
+      // Moving the page rebuilds the frame's browsing context, so the document
+      // the host installed with Page.setDocumentContent is gone for good.
+      if (frame) {
+        frameReady = false;
+        remounted = true;
+      }
     }
     surface.setAttribute(HOST_ATTRIBUTE, "true");
     Array.from(surface.children).forEach((child) => {
@@ -1685,6 +1789,7 @@
     muteNativeSelection();
     page.hidden = false;
     document.documentElement.setAttribute("data-codex-taskboard-open", "true");
+    return remounted;
   }
 
   function closeTaskboard(restoreFocus = true) {
@@ -1747,14 +1852,14 @@
     reattachTimer = window.setTimeout(() => {
       reattachTimer = null;
       ensureEntry();
-      mountActivePage();
+      if (mountActivePage()) reloadFrame();
       postHostContext();
     }, REATTACH_DELAY_MS);
   }
 
   function refresh() {
     ensureEntry();
-    mountActivePage();
+    if (mountActivePage()) reloadFrame();
     postHostContext();
   }
 

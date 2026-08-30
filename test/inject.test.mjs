@@ -264,7 +264,8 @@ test("issues open an unsent native Codex composer in the confirmed project", () 
   assert.match(source, /async function nativeProjectContext\(\)/);
   assert.match(source, /function normalizeNativeRootPath\(value\)/);
   assert.match(source, /async function resolveNativeProject\(requestedProjectId, workspacePath\)/);
-  assert.match(source, /candidate\.id === requestedProjectId\s*\|\|\s*candidate\.rootPaths\.some/);
+  assert.match(source, /let project = context\.projects\.find\(\(candidate\) => candidate\.id === requestedProjectId\)/);
+  assert.match(source, /canonicalNativeRootPaths\(\[/);
   assert.match(source, /const targetRoot = normalizedWorkspacePath \? workspacePath : project\?\.rootPaths\[0\]/);
   assert.match(source, /async function waitForNativeProject\(projectId, targetRoot\)/);
   const waitStart = source.indexOf("async function waitForNativeProject");
@@ -272,7 +273,7 @@ test("issues open an unsent native Codex composer in the confirmed project", () 
   assert.match(waitSource, /selectedNativeProjectId\(\)/);
   assert.match(waitSource, /nativeProjectContext\(\)/);
   assert.match(waitSource, /selectedProjectId === projectId/);
-  assert.match(waitSource, /project\?\.rootPaths\?\.some/);
+  assert.match(waitSource, /canonicalRoots\.slice\(1\)\.some/);
   assert.doesNotMatch(waitSource, /activeNativeWorkspaceRoots\(\)/);
   assert.match(
     source,
@@ -408,6 +409,7 @@ test("Codex bootstrap metadata resolves local roots and SSH remote roots asynchr
         }),
       },
     },
+    requestNativeFetch: async () => undefined,
   });
   assert.deepEqual(
     JSON.parse(JSON.stringify([...(await readCodexProjectMetadata()).entries()])),
@@ -421,6 +423,7 @@ test("Codex bootstrap metadata resolves local roots and SSH remote roots asynchr
         projectKind: "remote",
         workspacePath: "/srv/example/project",
         hostId: "remote-ssh-discovered:example",
+        name: "remote-project",
       }],
     ],
   );

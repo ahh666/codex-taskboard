@@ -33,11 +33,11 @@ test("issue detail renders descriptions and comments with GFM markdown", () => {
   );
   assert.match(
     detailSource,
-    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
+    /\{description\s*\?\s*<DescriptionDocument\s*value=\{description\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*attachments=\{attachments\}\s*enableImagePreview\s*onOpenAttachment=\{handleAttachmentDownload\}\s*\/>\s*:\s*text\("添加描述…", "Add description…"\)\}/,
   );
   assert.match(
     detailSource,
-    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*\/>\s*<\/div>\s*\)/s,
+    /comment\.body && \(\s*<div className="comment-body">\s*<DescriptionDocument\s*value=\{comment\.body\}\s*referenceTasks=\{referenceTasks\}\s*onOpenTask=\{onOpenTask\}\s*attachments=\{comment\.attachments\}\s*enableImagePreview\s*onOpenAttachment=\{handleAttachmentDownload\}\s*\/>\s*<\/div>\s*\)/s,
   );
   assert.doesNotMatch(detailSource, /value\.split\("\\n"\)/);
 });
@@ -59,6 +59,24 @@ test("issue detail safely hides Markdown comments and renders Mermaid diagrams l
   assert.match(markdownSource, /dangerouslySetInnerHTML/);
   assert.match(markdownSource, /Mermaid source/);
   assert.doesNotMatch(markdownSource, /rehypeRaw/);
+});
+
+test("comment posting keeps the created comment visible when an attachment upload fails", () => {
+  assert.match(detailSource, /Promise\.allSettled/);
+  assert.match(detailSource, /setComments\(\(current\) => \[\.\.\.current, nextComment\]\)/);
+  assert.match(detailSource, /附件上传失败/);
+  assert.match(detailSource, /removePendingInlineTokens/);
+  assert.match(detailSource, /const initialCommentBody = removePendingInlineTokens\([\s\S]*createComment\(task\.id, initialCommentBody\)/);
+  assert.match(detailSource, /commentUpdateFailed = true;[\s\S]*nextComment = comment;/);
+  assert.match(detailSource, /nextComment: Comment =/);
+});
+
+test("description attachment batches roll back successful uploads when another upload fails", () => {
+  assert.match(detailSource, /Promise\.allSettled/);
+  assert.match(detailSource, /deleteAttachment\(attachment\)/);
+  assert.match(detailSource, /uploadedAttachments\.map/);
+  assert.match(detailSource, /inlineResults\.flatMap/);
+  assert.match(detailSource, /fileResults\.flatMap/);
 });
 
 test("issue detail keeps ordinary code blocks and the Mermaid fallback readable in both themes", () => {
