@@ -514,6 +514,9 @@
           projectKind: "remote",
           workspacePath,
           hostId,
+          name: typeof project?.label === "string" && project.label.trim()
+            ? project.label.trim()
+            : id,
         });
       });
     }
@@ -533,7 +536,7 @@
 
   function readCodexProjects(metadata = codexProjectMetadata) {
     const seen = new Set();
-    return Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
+    const projects = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
       .flatMap((row) => {
         const id = row.getAttribute("data-app-action-sidebar-project-id")?.trim();
         const name = (
@@ -545,6 +548,11 @@
         seen.add(id);
         return [{ id, name, ...metadata.get(id) }];
       });
+    for (const [id, project] of metadata) {
+      if (project.projectKind !== "remote" || seen.has(id)) continue;
+      projects.push({ id, ...project });
+    }
+    return projects;
   }
 
   function findProjectsSection() {
