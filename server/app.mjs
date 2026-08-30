@@ -3120,7 +3120,10 @@ export function createTaskboardServer(options = {}) {
           `%${character.charCodeAt(0).toString(16).toUpperCase()}`
         ));
         const canOpenInline = attachmentContentRoute[2] === "content"
-          && INLINE_ATTACHMENT_TYPES.has(attachment.contentType);
+          && (
+            INLINE_ATTACHMENT_TYPES.has(attachment.contentType)
+            || attachment.contentType.startsWith("video/")
+          );
         response.writeHead(200, {
           "cache-control": "private, no-store",
           "content-disposition": `${canOpenInline ? "inline" : "attachment"}; filename*=UTF-8''${encodedFilename}`,
