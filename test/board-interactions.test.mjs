@@ -171,6 +171,7 @@ test("issue details keep ordinary task attachments reachable", () => {
   assert.match(detailSource, /className="attachment-add-button"/);
   assert.match(detailSource, /className="attachment-list"/);
   assert.match(detailSource, /setPendingAttachmentDelete\(attachment\)/);
+  assert.match(detailSource, /disabled=\{isFeishuTask\}/);
   assert.match(detailSource, /className="comment-attachment-list"/);
 });
 

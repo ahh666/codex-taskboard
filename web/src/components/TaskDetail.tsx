@@ -1353,6 +1353,7 @@ export function TaskDetail({
                           </a>
                           <button
                             type="button"
+                            disabled={isFeishuTask}
                             aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
                             title={text("删除附件", "Delete attachment")}
                             onClick={() => setPendingAttachmentDelete(attachment)}
@@ -1662,7 +1663,7 @@ export function TaskDetail({
                                   </span>
                                   <span><strong>{attachment.filename}</strong><small>{fileSize(attachment.size)}</small></span>
                                 </a>
-                                {editingId !== comment.id && (
+                                {editingId !== comment.id && !isFeishuTask && (
                                   <button
                                     type="button"
                                     aria-label={text(`删除 ${attachment.filename}`, `Delete ${attachment.filename}`)}
