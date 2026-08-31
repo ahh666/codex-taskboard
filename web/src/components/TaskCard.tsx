@@ -365,7 +365,7 @@ function AssigneeControl({
     ));
   return (
     <TaskPropertyPicker
-      value={actorKey(assignee)}
+      value={actorKey(task.assignee)}
       options={options.map((actor) => ({
         value: actorKey(actor),
         label: actorKey(actor) === currentUserKey ? text(`${actor.name}（我）`, `${actor.name} (me)`) : actor.name,
