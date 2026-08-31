@@ -255,6 +255,7 @@ interface AutomationRequestContext {
   projectName: string;
   workspacePath: string;
   remoteProjects: CodexProjectIdentity[];
+  codexProjects: CodexProjectIdentity[];
   skillPath: string;
 }
 
@@ -564,6 +565,7 @@ function taskToDraft(task: Task): TaskDraft {
     status: task.status,
     priority: task.priority,
     labels: task.labels,
+    executionTarget: task.executionTarget,
     developmentContext: task.developmentContext,
     startDate: task.startDate,
     dueDate: task.dueDate,
@@ -1132,6 +1134,24 @@ export function App() {
               || left.codexProjectId.localeCompare(right.codexProjectId)
             ))
         : [],
+      codexProjects: (hostContext?.projects ?? [])
+        .flatMap((project) => {
+          if (!project.id || !project.workspacePath) return [];
+          const codexProjectKind = project.projectKind ?? "local";
+          const codexHostId = project.hostId ?? (codexProjectKind === "local" ? "local" : "");
+          if (!codexHostId) return [];
+          return [{
+            codexProjectId: project.id,
+            codexProjectKind,
+            codexHostId,
+            workspacePath: project.workspacePath,
+          }];
+        })
+        .sort((left, right) => (
+          left.codexHostId.localeCompare(right.codexHostId)
+          || left.workspacePath.localeCompare(right.workspacePath)
+          || left.codexProjectId.localeCompare(right.codexProjectId)
+        )),
       skillPath: manageTaskboardSkillPath,
     };
   }, [automationProjectContext, hostContext, manageTaskboardSkillPath, selectedProject]);
@@ -1228,6 +1248,24 @@ export function App() {
       ? [{ id: choice.id, name: choice.name }]
       : [];
   });
+  const executionTargetEnabled = taskboardMetadata?.mode !== "cloud";
+  const executionTargetOptions = useMemo(() => (
+    executionTargetEnabled ? (hostContext?.projects ?? []).flatMap((project) => {
+      if (!project.id || !project.name || !project.workspacePath) return [];
+      const codexProjectKind = project.projectKind ?? "local";
+      const codexHostId = project.hostId ?? (codexProjectKind === "local" ? "local" : "");
+      if (!codexHostId) return [];
+      return [{
+        label: project.name,
+        identity: {
+          codexProjectId: project.id,
+          codexProjectKind,
+          codexHostId,
+          workspacePath: project.workspacePath,
+        },
+      }];
+    }) : []
+  ), [executionTargetEnabled, hostContext?.projects]);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   function openTaskContextMenu(task: Task, position: { x: number; y: number }) {
     if (
@@ -1347,6 +1385,7 @@ export function App() {
         projectName: context.projectName,
         workspacePath: context.workspacePath,
         remoteProjects: context.remoteProjects,
+        codexProjects: context.codexProjects,
         skillPath: context.skillPath,
         ...(automationId ? { automationId } : {}),
         enabledByUser: options.enabledByUser,
@@ -3831,6 +3870,8 @@ export function App() {
             availableLabels={availableLabels}
             developmentScan={developmentScan}
             developmentScanLoading={developmentScanLoading}
+            executionTargetEnabled={executionTargetEnabled}
+            executionTargetOptions={executionTargetOptions}
             commentsRevision={commentsRevision}
             attachmentsRevision={attachmentsRevision}
             onCreateLabel={persistProjectLabel}
@@ -4339,6 +4380,8 @@ export function App() {
           currentUser={currentUser}
           developmentScan={developmentScan}
           developmentScanLoading={developmentScanLoading}
+          executionTargetEnabled={executionTargetEnabled}
+          executionTargetOptions={executionTargetOptions}
           onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
             if (!editor.task) {

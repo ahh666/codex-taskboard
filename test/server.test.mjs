@@ -692,6 +692,12 @@ test("project and task CRUD flow", async () => {
       priority: "high",
       labels: ["frontend", "mvp"],
       threadId: "thread-123",
+      executionTarget: {
+        codexProjectId: "codex-website",
+        codexProjectKind: "local",
+        codexHostId: "local",
+        workspacePath: "/work/website",
+      },
       developmentContext: {
         type: "worktree",
         path: "/work/website/.worktrees/taskboard",
@@ -709,6 +715,12 @@ test("project and task CRUD flow", async () => {
   assert.equal(created.archivedAt, null);
   assert.deepEqual(created.labels, ["frontend", "mvp"]);
   assert.equal(created.threadId, "thread-123");
+  assert.deepEqual(created.executionTarget, {
+    codexProjectId: "codex-website",
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath: "/work/website",
+  });
   assert.equal(created.creatorType, "user");
   assert.equal(created.creatorId, "local-user");
   assert.equal(created.creatorName, "本地用户");

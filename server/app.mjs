@@ -609,6 +609,42 @@ function parseThreadBinding(value) {
   return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
 }
 
+function parseExecutionTarget(value) {
+  if (value === undefined || value === null) return value;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set([
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
+  ]));
+  const codexProjectId = stringField(value.codexProjectId, "executionTarget.codexProjectId", {
+    required: true,
+    maxLength: 256,
+  });
+  const codexProjectKind = value.codexProjectKind;
+  const codexHostId = stringField(value.codexHostId, "executionTarget.codexHostId", {
+    required: true,
+    maxLength: 256,
+  });
+  const workspacePath = stringField(value.workspacePath, "executionTarget.workspacePath", {
+    required: true,
+    maxLength: 4096,
+  });
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw new ApiError(400, "INVALID_FIELD", "executionTarget.codexProjectKind must be local or remote");
+  }
+  if (
+    (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+    || workspacePath.includes("\0")
+    || (!path.posix.isAbsolute(workspacePath) && !path.win32.isAbsolute(workspacePath))
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "Execution project identity is invalid");
+  }
+  return { codexProjectId, codexProjectKind, codexHostId, workspacePath };
+}
+
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
@@ -679,7 +715,7 @@ function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding",
-    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
+    "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
   const task = {
@@ -693,6 +729,7 @@ function parseTaskCreate(body) {
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
+    executionTarget: parseExecutionTarget(body.executionTarget ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
     startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
@@ -708,7 +745,7 @@ function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
-    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
+    "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
@@ -721,6 +758,7 @@ function parseTaskPatch(body) {
   if (body.status !== undefined) changes.status = parseStatus(body.status);
   if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
+  if (body.executionTarget !== undefined) changes.executionTarget = parseExecutionTarget(body.executionTarget);
   if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
   if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);

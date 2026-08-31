@@ -11,6 +11,8 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   type ActorIdentity,
+  type CodexProjectIdentity,
+  type CodexProjectOption,
   type DevelopmentContext,
   type DevelopmentScan,
   type Recurrence,
@@ -92,6 +94,7 @@ export interface NewTaskEditorDraft {
   priority: TaskPriority;
   assignee: ActorIdentity;
   selectedLabels: string[];
+  executionTarget?: CodexProjectIdentity | null;
   developmentContext: DevelopmentContext | null;
   startDate: string;
   dueDate: string;
@@ -111,6 +114,8 @@ interface TaskEditorProps {
   initialDraft: NewTaskEditorDraft | null;
   labels: string[];
   currentUser: ActorIdentity;
+  executionTargetEnabled: boolean;
+  executionTargetOptions: CodexProjectOption[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
   onCreateLabel: (label: string) => Promise<void>;
@@ -150,6 +155,10 @@ function contextValue(context: DevelopmentContext | null): string {
   return context ? JSON.stringify(context) : "";
 }
 
+function executionTargetValue(target: CodexProjectIdentity | null): string {
+  return target ? JSON.stringify(target) : "";
+}
+
 function contextLabel(
   context: DevelopmentContext,
   text: (chinese: string, english: string) => string,
@@ -170,6 +179,8 @@ export function TaskEditor({
   initialDraft,
   labels: availableLabels,
   currentUser,
+  executionTargetEnabled,
+  executionTargetOptions,
   developmentScan,
   developmentScanLoading,
   onCreateLabel,
@@ -193,6 +204,9 @@ export function TaskEditor({
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? initialDraft?.priority ?? "none");
   const [assignee, setAssignee] = useState<ActorIdentity>(task?.assignee ?? initialDraft?.assignee ?? currentUser);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(task?.labels ?? initialDraft?.selectedLabels ?? []);
+  const [executionTarget, setExecutionTarget] = useState<CodexProjectIdentity | null>(
+    task?.executionTarget ?? initialDraft?.executionTarget ?? null,
+  );
   const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(task?.developmentContext ?? initialDraft?.developmentContext ?? null);
   const [startDate] = useState(task?.startDate ?? initialDraft?.startDate ?? "");
   const [dueDate, setDueDate] = useState(task?.dueDate ?? initialDraft?.dueDate ?? "");
@@ -201,7 +215,7 @@ export function TaskEditor({
   const [relatedIds, setRelatedIds] = useState<string[]>(initialDraft?.relations.relatedIds ?? []);
   const [subIssueIds, setSubIssueIds] = useState<string[]>(initialDraft?.relations.subIssueIds ?? []);
   const [createMore, setCreateMore] = useState(false);
-  const [menu, setMenu] = useState<"project" | "status" | "priority" | "assignee" | "labels" | "development" | "more" | "due" | "recurrence" | null>(null);
+  const [menu, setMenu] = useState<"project" | "executionTarget" | "status" | "priority" | "assignee" | "labels" | "development" | "more" | "due" | "recurrence" | null>(null);
   const [relationMenu, setRelationMenu] = useState<DraftRelationMenu | null>(null);
   const [moreMenuPosition, setMoreMenuPosition] = useState<{ right: number; bottom: number } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -381,6 +395,12 @@ export function TaskEditor({
       ]);
       return;
     }
+    if (executionTargetEnabled && status === "todo" && !executionTarget) {
+      setError(executionTargetOptions.length > 0
+        ? ["进入待办前请选择目标 Codex 项目。", "Select a target Codex project before moving to Todo."]
+        : ["请先在 Codex App 中添加可执行的项目。", "Add an executable project in the Codex app first."]);
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -398,6 +418,7 @@ export function TaskEditor({
         priority,
         labels: selectedLabels,
         ...(assigneeTarget ? { assigneeTarget } : {}),
+        ...(executionTargetEnabled ? { executionTarget } : {}),
         developmentContext,
         startDate: startDate || null,
         dueDate: dueDate || null,
@@ -477,6 +498,7 @@ export function TaskEditor({
       priority,
       assignee,
       selectedLabels,
+      ...(executionTargetEnabled ? { executionTarget } : {}),
       developmentContext,
       startDate,
       dueDate,
@@ -607,6 +629,30 @@ export function TaskEditor({
                   if (nextProjectId !== projectId) setDevelopmentContext(null);
                   onProjectChange?.(nextProjectId);
                 }}
+              />
+            )}
+            {executionTargetEnabled && (
+              <TaskPropertyPicker
+                value={executionTargetValue(executionTarget)}
+                options={[
+                  {
+                    value: "",
+                    label: text("目标 Codex 项目", "Target Codex project"),
+                    icon: <TaskboardIcon name="projectFolder" />,
+                  },
+                  ...executionTargetOptions.map((option) => ({
+                    value: executionTargetValue(option.identity),
+                    label: option.label,
+                    icon: <TaskboardIcon name="projectFolder" />,
+                  })),
+                ]}
+                open={menu === "executionTarget"}
+                disabled={executionTargetOptions.length === 0 || (status === "in_progress" && Boolean(task?.threadBinding))}
+                triggerClassName="property-control property-project"
+                ariaLabel={text("目标 Codex 项目", "Target Codex project")}
+                title={executionTarget?.workspacePath}
+                onOpenChange={(open) => setMenu(open ? "executionTarget" : null)}
+                onChange={(value) => setExecutionTarget(value ? JSON.parse(value) as CodexProjectIdentity : null)}
               />
             )}
             <TaskPropertyPicker

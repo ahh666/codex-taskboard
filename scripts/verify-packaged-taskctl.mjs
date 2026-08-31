@@ -131,6 +131,10 @@ try {
     "--title", "Packaged taskctl preflight",
     "--status", "todo",
     "--thread-id", "00000000-0000-4000-8000-000000000001",
+    "--execution-codex-project-id", projectId,
+    "--execution-codex-project-kind", "local",
+    "--execution-codex-host-id", "local",
+    "--execution-workspace-path", appRoot,
     "--json",
   ]).task;
   const fetched = runTaskctl(wrapperPath, temporaryHome, ["issue", "get", created.id, "--json"]).task;

@@ -105,6 +105,19 @@ test("the automation host request accepts catalog-provided project automation op
     null,
   );
   assert.deepEqual(parseTaskboardAutomationHostRequest(remoteRequest), remoteRequest);
+  const routedRequest = {
+    ...baseRequest,
+    codexProjects: [
+      {
+        codexProjectId: "codex-project-123",
+        codexProjectKind: "local",
+        codexHostId: "local",
+        workspacePath: "/Users/example/Documents/ppt-skill",
+      },
+    ],
+  };
+  assert.deepEqual(parseTaskboardAutomationHostRequest(routedRequest), routedRequest);
+  assert.match(buildTaskboardAutomationPrompt(routedRequest), /全局收件箱控制器/);
   const windowsRemoteRequest = {
     ...remoteRequest,
     workspacePath: String.raw`C:\Users\admin\Documents\dashi-taskboard`,
