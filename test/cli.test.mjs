@@ -445,6 +445,27 @@ test("issue move can clear an unconfirmed task binding", async () => {
   });
 });
 
+test("issue create forwards an execution target", async () => {
+  let requestBody;
+  const result = await run([
+    "issue", "create", "--project", "TASK", "--title", "Route me", "--status", "todo",
+    "--execution-codex-project-id", "codex-project",
+    "--execution-codex-project-kind", "local",
+    "--execution-codex-host-id", "local",
+    "--execution-workspace-path", "/Users/example/project",
+  ], async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return response({ task: { id: "TASK-1", version: 1 } });
+  });
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(requestBody.executionTarget, {
+    codexProjectId: "codex-project",
+    codexProjectKind: "local",
+    codexHostId: "local",
+    workspacePath: "/Users/example/project",
+  });
+});
+
 test("an explicit --thread-id overrides CODEX_THREAD_ID on issue writes", async () => {
   let requestBody;
   const result = await run(

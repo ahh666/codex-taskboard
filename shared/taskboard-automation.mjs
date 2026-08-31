@@ -17,6 +17,7 @@ const HOST_REQUEST_FIELDS = new Set([
   "projectName",
   "workspacePath",
   "remoteProjects",
+  "codexProjects",
   "skillPath",
   "automationId",
   "enabledByUser",
@@ -61,6 +62,27 @@ export function parseTaskboardAutomationHostRequest(value) {
     ))
     || (codexProjectKind === "local" && remoteProjects.length > 0)
   ) return null;
+  const codexProjects = value.codexProjects === undefined ? [] : value.codexProjects;
+  if (
+    !Array.isArray(codexProjects)
+    || codexProjects.some((project) => (
+      !project
+      || typeof project !== "object"
+      || Array.isArray(project)
+      || Object.keys(project).some((field) => ![
+        "codexProjectId",
+        "codexProjectKind",
+        "codexHostId",
+        "workspacePath",
+      ].includes(field))
+      || !validText(project.codexProjectId, 256)
+      || (project.codexProjectKind !== "local" && project.codexProjectKind !== "remote")
+      || !validText(project.codexHostId, 256)
+      || (project.codexProjectKind === "local" && project.codexHostId !== "local")
+      || (project.codexProjectKind === "remote" && project.codexHostId === "local")
+      || !validAbsolutePath(project.workspacePath)
+    ))
+  ) return null;
   if (!INTERVAL_MINUTES.has(value.intervalMinutes)) return null;
   if (!validText(value.model, 256) || !validText(value.reasoningEffort, 100)) return null;
   if (value.automationId !== undefined && !validText(value.automationId, 256)) return null;
@@ -78,6 +100,7 @@ export function parseTaskboardAutomationHostRequest(value) {
     projectName: value.projectName,
     workspacePath: value.workspacePath,
     ...(value.remoteProjects === undefined ? {} : { remoteProjects }),
+    ...(value.codexProjects === undefined ? {} : { codexProjects }),
     skillPath: value.skillPath,
     ...(value.automationId === undefined ? {} : { automationId: value.automationId }),
     enabledByUser: value.enabledByUser,
@@ -96,7 +119,16 @@ export function buildTaskboardAutomationPrompt(request) {
   const taskctlCommand = buildTaskctlCommand(request);
   const remoteProject = request.codexProjectKind === "remote";
   const remoteProjects = request.remoteProjects ?? [];
-  const executionInstructions = remoteProject
+  const codexProjects = request.codexProjects ?? [];
+  const routedInbox = Object.hasOwn(request, "codexProjects");
+  const executionInstructions = routedInbox
+    ? [
+        `本自动化是全局收件箱控制器；当前可用 Codex 项目的精确 identity 目录是 ${JSON.stringify(codexProjects)}。每条 todo 的首次路由必须使用 issue.executionTarget 中保存的 codexProjectId、codexProjectKind、codexHostId、workspacePath 四个字段；已进入 in_progress 的任务只使用其完整 threadBinding 恢复原会话。不得按标题、描述、项目名或相似路径猜测目标。`,
+        "先分别读取 todo 与 in_progress；逐个读取 issue、全部评论和附件后，再按依赖、executionTarget、开发上下文及共享资源划分执行组。只有 executionTarget 四字段与 identity 目录中的恰好一项完全相同的 todo 才可认领；缺失或不可用时记录评论并跳过。已有完整 threadBinding 的任务必须恢复保存的原会话，不得创建替代会话。",
+        "每个新执行组只创建一个 Codex 会话，创建前使用 list_projects 精确确认 executionTarget 项目；Git 项目使用 worktree，非 Git 项目使用 local。向会话发送完整任务快照、评论、附件、executionTarget 和真实操作路径，要求完成实现、直接验证并返回改动、精确提交、PR、CI、审查决定和剩余风险。执行会话不得运行 taskctl 或改看板状态。",
+        "创建或恢复会话后，控制器保存完整 threadBinding 和独立 version；只在会话完成、直接验证通过且交接证据完整时写评论并移动到 in_review。冲突、临时不可达、等待用户或等待 CI 时保留 in_progress 并继续其他独立任务；不得清除或抢占已有 binding。",
+      ]
+    : remoteProject
     ? [
         `本自动化仅在本机作为任务面板控制器运行；实际开发必须派发到 Codex SSH 远程项目。导入项目的基础 identity 是 projectId=${JSON.stringify(request.codexProjectId)}、hostId=${JSON.stringify(request.codexHostId)}、workspacePath=${JSON.stringify(request.workspacePath)}；同一保存主机当前可用的精确远程项目映射是 ${JSON.stringify(remoteProjects)}。不要在当前本地自动化会话修改项目文件。`,
         "从返回的 todo 中只选择依赖已完成的议题：relations.blockedBy 为空，或其中每个依赖的 status 都严格等于 done。无依赖的 todo 仍可并行处理。若有 todo 但全部被未完成依赖阻塞，本轮直接结束，不暂停自动化，也不创建或打开新的任务会话。",
@@ -125,10 +157,26 @@ export function buildTaskboardAutomationPrompt(request) {
   return [
     `[$manage-taskboard](${request.skillPath}) e-taskboard 每 ${request.intervalMinutes} 分钟检查任务面板中的「${request.projectName}」项目（项目 ID：${request.taskboardProjectId}，项目目录：${request.workspacePath}）。`,
     `本轮所有 taskctl 操作都使用完整命令前缀 ${taskctlCommand}，不要使用 PATH 中的 taskctl。`,
-    `开始时先运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --json。若没有 todo，直接结束；Taskboard 主机侧会暂停当前自动化，不要创建或打开新的任务会话。`,
+    routedInbox
+      ? `开始时分别运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --archived false --json 和 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status in_progress --archived false --json。把全部 todo 作为候选，并恢复具有完整 threadBinding 的 in_progress；两组都为空时结束。`
+      : `开始时先运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --json。若没有 todo，直接结束；Taskboard 主机侧会暂停当前自动化，不要创建或打开新的任务会话。`,
     ...executionInstructions,
-    `本次处理或交接后，再次运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --json。若没有 todo，直接结束；Taskboard 主机侧会暂停当前自动化，避免后续创建空会话。`,
+    routedInbox
+      ? `本轮处理或交接后，再次检查 todo 与 in_progress；只有两组都没有可执行工作时才结束，保留下一轮恢复仍在 in_progress 的完整 binding。`
+      : `本次处理或交接后，再次运行 ${taskctlCommand} issue list --project ${request.taskboardProjectId} --status todo --json。若没有 todo，直接结束；Taskboard 主机侧会暂停当前自动化，避免后续创建空会话。`,
   ].join("\n");
+}
+
+export function taskboardAutomationHasPendingWork(todoTasks, inProgressTasks) {
+  return todoTasks.length > 0 || inProgressTasks.some((task) => {
+    const binding = task?.threadBinding;
+    return binding
+      && validText(binding.threadId, 256)
+      && validText(binding.codexProjectId, 256)
+      && (binding.codexProjectKind === "local" || binding.codexProjectKind === "remote")
+      && validText(binding.codexHostId, 256)
+      && validAbsolutePath(binding.workspacePath);
+  });
 }
 
 function buildTaskctlCommand(request) {
@@ -158,25 +206,27 @@ export function buildTaskboardAutomationSpec(request) {
 }
 
 export function taskboardAutomationPolicyOperation(request, {
-  explicit,
+  explicit = false,
   hasTodo,
-  previousQuotaState,
+  hasPendingWork,
   quotaState,
   currentStatus,
+  previousQuotaState,
 }) {
+  const legacyPolicyCall = hasPendingWork === undefined;
+  const pendingWork = hasPendingWork === undefined ? hasTodo : hasPendingWork;
   if (!request.enabledByUser) return "pause";
-  if (hasTodo === false) return "pause";
+  if (pendingWork === false) return "pause";
   if (
-    !explicit
+    legacyPolicyCall
+    && !explicit
     && currentStatus === "PAUSED"
     && (!request.quotaAware || previousQuotaState === "available")
   ) return "list";
   if (request.quotaAware && quotaState !== "available") return "pause";
-  if (
-    explicit
-    || currentStatus === undefined
-    || (request.quotaAware && previousQuotaState !== "available")
-  ) return "ensure-active";
+  if (legacyPolicyCall && (explicit || currentStatus === undefined || (request.quotaAware && previousQuotaState !== "available"))) {
+    return "ensure-active";
+  }
   return "ensure-active";
 }
 

@@ -35,6 +35,7 @@ import type {
   Attachment,
   Comment,
   CodexProjectIdentity,
+  CodexProjectOption,
   CodexThreadBinding,
   DevelopmentContext,
   DevelopmentScan,
@@ -112,6 +113,8 @@ interface TaskDetailProps {
   availableLabels: string[];
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
+  executionTargetEnabled: boolean;
+  executionTargetOptions: CodexProjectOption[];
   commentsRevision: number;
   attachmentsRevision: number;
   onCreateLabel: (label: string) => Promise<void>;
@@ -142,6 +145,10 @@ function messageFor(error: unknown): TaskDetailError {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return ["操作未完成，请重试。", "The action could not be completed. Try again."];
+}
+
+function executionTargetValue(target: CodexProjectIdentity | null): string {
+  return target ? JSON.stringify(target) : "";
 }
 
 function issueMessageFor(error: unknown): TaskDetailError {
@@ -246,6 +253,7 @@ const ACTIVITY_FIELD_LABELS: Record<string, readonly [string, string]> = {
   priority: ["优先级", "priority"],
   labels: ["标签", "labels"],
   assignee: ["负责人", "assignee"],
+  executionTarget: ["执行项目", "execution project"],
   developmentContext: ["开发上下文", "development context"],
   startDate: ["开始日期", "start date"],
   dueDate: ["截止日期", "due date"],
@@ -288,6 +296,11 @@ function activityValue(
   if (field === "assignee" && typeof value === "object") {
     const actor = value as ActorIdentity;
     return `${actor.name} @${actor.id}`;
+  }
+  if (field === "executionTarget" && typeof value === "object") {
+    const target = value as CodexProjectIdentity;
+    const folder = target.workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? target.workspacePath;
+    return `${folder} · ${target.codexProjectKind === "remote" ? target.codexHostId : text("本机", "Local")}`;
   }
   if (field === "developmentContext" && typeof value === "object") {
     const context = value as { type: string; branch?: string | null; path?: string | null };
@@ -343,7 +356,7 @@ function ActivityChangeIcon({ field, before, after }: {
     }
     return <RelationIcon color="currentColor" size={14} />;
   }
-  if (field === "projectId") return <ProjectIcon color="currentColor" size={14} />;
+  if (field === "projectId" || field === "executionTarget") return <ProjectIcon color="currentColor" size={14} />;
   if (field === "labels") return <LabelIcon color="currentColor" size={14} />;
   if (field === "assignee") return <LinearIcon name="myIssues" />;
   if (field === "developmentContext") return <BranchIcon color="currentColor" size={14} />;
@@ -400,6 +413,8 @@ export function TaskDetail({
   availableLabels,
   developmentScan,
   developmentScanLoading,
+  executionTargetEnabled,
+  executionTargetOptions,
   commentsRevision,
   attachmentsRevision,
   onCreateLabel,
@@ -424,7 +439,7 @@ export function TaskDetail({
   );
   const [editingDescription, setEditingDescription] = useState(false);
   const [propertyMenu, setPropertyMenu] = useState<
-    "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
+    "executionTarget" | "status" | "priority" | "assignee" | "labels" | "development" | "recurrence" | null
   >(null);
   const [savingProperty, setSavingProperty] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -1115,7 +1130,11 @@ export function TaskDetail({
   ) {
     developmentOptions.unshift(currentTask.developmentContext);
   }
-  const assigneeOptions = [currentTask.assignee, currentUser, CODEX_AGENT_ACTOR]
+  const displayAssignee = currentTask.assignee.type === currentUser.type
+    && currentTask.assignee.id === currentUser.id
+    ? currentUser
+    : currentTask.assignee;
+  const assigneeOptions = [displayAssignee, currentUser, CODEX_AGENT_ACTOR]
     .filter((actor, index, actors) => (
       actors.findIndex((candidate) => actorKey(candidate) === actorKey(actor)) === index
     ));
@@ -1877,6 +1896,36 @@ export function TaskDetail({
               </button>
             </div>
             <h2>{text("属性", "Properties")}</h2>
+            {executionTargetEnabled && (
+              <div className="detail-property-row">
+                <span className="detail-property-label">{text("执行项目", "Execution project")}</span>
+                <TaskPropertyPicker
+                  value={executionTargetValue(currentTask.executionTarget)}
+                  options={[
+                    {
+                      value: "",
+                      label: text("未指定", "Not set"),
+                      icon: <ProjectIcon color="currentColor" size={14} />,
+                    },
+                    ...executionTargetOptions.map((option) => ({
+                      value: executionTargetValue(option.identity),
+                      label: option.label,
+                      icon: <ProjectIcon color="currentColor" size={14} />,
+                    })),
+                  ]}
+                  open={propertyMenu === "executionTarget"}
+                  disabled={savingProperty === "executionTarget" || executionTargetOptions.length === 0 || (currentTask.status === "in_progress" && currentTask.threadBinding !== null)}
+                  className="detail-property-picker"
+                  triggerClassName="detail-property-trigger"
+                  ariaLabel={text("执行项目", "Execution project")}
+                  title={currentTask.executionTarget?.workspacePath}
+                  onOpenChange={(open) => setPropertyMenu(open ? "executionTarget" : null)}
+                  onChange={(value) => void saveTask({
+                    executionTarget: value ? JSON.parse(value) as CodexProjectIdentity : null,
+                  }, "executionTarget")}
+                />
+              </div>
+            )}
             <div className="detail-property-row">
               <span className="detail-property-label">{text("状态", "Status")}</span>
               <TaskPropertyPicker
@@ -1929,10 +1978,10 @@ export function TaskDetail({
             <div className="detail-property-row assignee-property">
               <span className="detail-property-label">{text("负责人", "Assignee")}</span>
               <TaskPropertyPicker
-                value={actorKey(currentTask.assignee)}
+                value={actorKey(displayAssignee)}
                 options={assigneeOptions.map((actor) => ({
                   value: actorKey(actor),
-                  label: actor.id === currentUser.id
+                  label: actorKey(actor) === actorKey(currentUser)
                     ? `${actor.name}${text("（我）", " (me)")}`
                     : actor.name,
                   icon: <ActorAvatar actor={actor} className="task-property-assignee-avatar" />,

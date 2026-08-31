@@ -227,31 +227,53 @@ function parseTrustedOrigins(value) {
   return origins;
 }
 
-function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
-  let host;
-  try {
-    host = new URL(`http://${request.headers.host ?? ""}`).hostname;
-  } catch {
-    throw new ApiError(403, "INVALID_HOST", "Request Host must be local or private");
+function parseRequestHost(value) {
+  if (typeof value !== "string" || !value || value !== value.trim()) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
   }
-  if (!isTrustedNetworkHost(host)) {
-    throw new ApiError(403, "INVALID_HOST", "Request Host must be local or private");
+  let url;
+  try {
+    url = new URL(`https://${value}`);
+  } catch {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
+  }
+  if (
+    url.username
+    || url.password
+    || url.pathname !== "/"
+    || url.search
+    || url.hash
+    || !url.hostname
+  ) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
+  }
+  return { hostname: url.hostname, httpsOrigin: url.origin };
+}
+
+function assertTrustedNetworkRequest(request, allowOpaqueOrigin = false, trustedOrigins = new Set()) {
+  const host = parseRequestHost(request.headers.host);
+  const trustedNetworkHost = isTrustedNetworkHost(host.hostname);
+  const configuredTrustedHost = !trustedNetworkHost && trustedOrigins.has(host.httpsOrigin);
+  if (!trustedNetworkHost && !configuredTrustedHost) {
+    throw new ApiError(403, "INVALID_HOST", "Request Host must be local, private, or explicitly trusted");
   }
 
   const origin = request.headers.origin;
-  if (!origin) return;
-  if (TRUSTED_EMBED_ORIGINS.has(origin)) return;
-  if (allowOpaqueOrigin && origin === "null") return;
-  if (trustedOrigins.has(origin)) return;
-  let originHost;
-  try {
-    originHost = new URL(origin).hostname;
-  } catch {
-    throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+  const configuredTrustedOrigin = trustedOrigins.has(origin);
+  if (origin && !configuredTrustedOrigin && !TRUSTED_EMBED_ORIGINS.has(origin)) {
+    if (!(allowOpaqueOrigin && origin === "null")) {
+      let originHost;
+      try {
+        originHost = new URL(origin).hostname;
+      } catch {
+        throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+      }
+      if (!isTrustedNetworkHost(originHost)) {
+        throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
+      }
+    }
   }
-  if (!isTrustedNetworkHost(originHost)) {
-    throw new ApiError(403, "INVALID_ORIGIN", "Request Origin must be local or private");
-  }
+  return configuredTrustedHost || configuredTrustedOrigin;
 }
 
 function assertLoopbackRequest(request) {
@@ -587,6 +609,42 @@ function parseThreadBinding(value) {
   return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
 }
 
+function parseExecutionTarget(value) {
+  if (value === undefined || value === null) return value;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set([
+    "codexProjectId",
+    "codexProjectKind",
+    "codexHostId",
+    "workspacePath",
+  ]));
+  const codexProjectId = stringField(value.codexProjectId, "executionTarget.codexProjectId", {
+    required: true,
+    maxLength: 256,
+  });
+  const codexProjectKind = value.codexProjectKind;
+  const codexHostId = stringField(value.codexHostId, "executionTarget.codexHostId", {
+    required: true,
+    maxLength: 256,
+  });
+  const workspacePath = stringField(value.workspacePath, "executionTarget.workspacePath", {
+    required: true,
+    maxLength: 4096,
+  });
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw new ApiError(400, "INVALID_FIELD", "executionTarget.codexProjectKind must be local or remote");
+  }
+  if (
+    (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+    || workspacePath.includes("\0")
+    || (!path.posix.isAbsolute(workspacePath) && !path.win32.isAbsolute(workspacePath))
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", "Execution project identity is invalid");
+  }
+  return { codexProjectId, codexProjectKind, codexHostId, workspacePath };
+}
+
 function requestHeader(request, name) {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
@@ -657,7 +715,7 @@ function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding",
-    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
+    "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
   const task = {
@@ -671,6 +729,7 @@ function parseTaskCreate(body) {
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
+    executionTarget: parseExecutionTarget(body.executionTarget ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
     startDate: parseDueDate(body.startDate ?? null, "startDate"),
     dueDate: parseDueDate(body.dueDate ?? null),
@@ -686,7 +745,7 @@ function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
     "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
-    "assigneeTarget", "developmentContext", "startDate", "dueDate", "recurrence",
+    "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
@@ -699,6 +758,7 @@ function parseTaskPatch(body) {
   if (body.status !== undefined) changes.status = parseStatus(body.status);
   if (body.priority !== undefined) changes.priority = parsePriority(body.priority);
   if (body.labels !== undefined) changes.labels = parseLabels(body.labels);
+  if (body.executionTarget !== undefined) changes.executionTarget = parseExecutionTarget(body.executionTarget);
   if (body.developmentContext !== undefined) changes.developmentContext = parseDevelopmentContext(body.developmentContext);
   if (body.startDate !== undefined) changes.startDate = parseDueDate(body.startDate, "startDate");
   if (body.dueDate !== undefined) changes.dueDate = parseDueDate(body.dueDate);
@@ -2132,7 +2192,7 @@ export function createTaskboardServer(options = {}) {
         request.url = `${incomingUrl.pathname.slice(routePrefix.length) || "/"}${incomingUrl.search}`;
       }
 
-      assertTrustedNetworkRequest(
+      const configuredTrustedRequest = assertTrustedNetworkRequest(
         request,
         Boolean(resolved.instanceToken),
         resolved.trustedOrigins,
@@ -2168,11 +2228,10 @@ export function createTaskboardServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       const pathname = url.pathname;
-      const configuredTrustedOrigin = resolved.trustedOrigins.has(origin);
       const isLocalAiRoute = pathname === "/api/local/ai" || pathname.startsWith("/api/local/ai/");
       const isDevelopmentContextsRoute = /^\/api\/projects\/[^/]+\/development-contexts$/.test(pathname);
       if (
-        configuredTrustedOrigin
+        configuredTrustedRequest
         && (
           pathname.startsWith("/api/local/")
           || pathname === "/api/device-workspaces"
@@ -2518,9 +2577,9 @@ export function createTaskboardServer(options = {}) {
           throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "GET /api/meta does not accept query parameters");
         }
         return sendJson(response, 200, {
-          ...(configuredTrustedOrigin ? {} : { manageTaskboardSkillPath: resolved.skillPath }),
+          ...(configuredTrustedRequest ? {} : { manageTaskboardSkillPath: resolved.skillPath }),
           capabilities: {
-            localAiChat: !configuredTrustedOrigin
+            localAiChat: !configuredTrustedRequest
               && isLoopbackAddress(request.socket.remoteAddress),
           },
           ...(capabilityCloudConfig?.remoteUrl
@@ -2530,7 +2589,7 @@ export function createTaskboardServer(options = {}) {
                 transport: "websocket",
                 endpoint: "/api/events",
               },
-              localCapabilities: { available: !configuredTrustedOrigin },
+              localCapabilities: { available: !configuredTrustedRequest },
             }
             : {}),
         });

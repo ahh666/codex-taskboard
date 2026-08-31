@@ -84,6 +84,14 @@ function storedThreadBindingForExisting(current, threadBinding, threadId) {
   return storedThreadBinding(threadBinding, threadId);
 }
 
+function sameExecutionTarget(left, right) {
+  if (left === null || right === null) return left === right;
+  return left.codexProjectId === right.codexProjectId
+    && left.codexProjectKind === right.codexProjectKind
+    && left.codexHostId === right.codexHostId
+    && left.workspacePath === right.workspacePath;
+}
+
 function attachTaskActivity(task, comments, activities, previewImage = null) {
   const orderedComments = [...comments].sort((left, right) => (
     left.id.localeCompare(right.id)
@@ -243,6 +251,7 @@ function taskFromRow(row) {
     sortOrder: row.sort_order,
     threadId: row.thread_id,
     threadBinding: threadBindingFromRow(row),
+    executionTarget: row.execution_target === null ? null : JSON.parse(row.execution_target),
     legacyLocalThreadId: legacyLocalThreadIdFromRow(row),
     creatorType: row.creator_type,
     creatorId: row.creator_id,
@@ -494,6 +503,7 @@ export class TaskboardDatabase {
         thread_codex_project_kind TEXT,
         thread_codex_host_id TEXT,
         thread_workspace_path TEXT,
+        execution_target TEXT,
         creator_type TEXT NOT NULL DEFAULT 'user',
         creator_id TEXT NOT NULL DEFAULT 'local-user',
         creator_name TEXT NOT NULL DEFAULT '本地用户',
@@ -696,6 +706,7 @@ export class TaskboardDatabase {
       "thread_codex_project_kind",
       "thread_codex_host_id",
       "thread_workspace_path",
+      "execution_target",
     ]) {
       if (!taskColumns.some((candidate) => candidate.name === column)) {
         this.database.exec(`ALTER TABLE tasks ADD COLUMN ${column} TEXT`);
@@ -1048,6 +1059,7 @@ export class TaskboardDatabase {
           thread_codex_project_kind TEXT,
           thread_codex_host_id TEXT,
           thread_workspace_path TEXT,
+          execution_target TEXT,
           git_branch TEXT,
           worktree_path TEXT,
           worktree_branch TEXT,
@@ -1064,14 +1076,14 @@ export class TaskboardDatabase {
         INSERT INTO tasks_status_migration (
           id, identifier, project_id, title, description, status, priority, labels,
           sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
-          thread_codex_host_id, thread_workspace_path, git_branch, worktree_path, worktree_branch,
+          thread_codex_host_id, thread_workspace_path, execution_target, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
         )
         SELECT
           id, identifier, project_id, title, description, status, priority, labels,
           sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
-          thread_codex_host_id, thread_workspace_path, git_branch, worktree_path, worktree_branch,
+          thread_codex_host_id, thread_workspace_path, execution_target, git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
         FROM tasks;
@@ -1244,7 +1256,7 @@ export class TaskboardDatabase {
         INSERT INTO tasks (
           id, identifier, project_id, title, description, status, priority, labels,
           sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
-          thread_codex_host_id, thread_workspace_path,
+          thread_codex_host_id, thread_workspace_path, execution_target,
           creator_type, creator_id, creator_name, creator_avatar_url,
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           git_branch, worktree_path, worktree_branch,
@@ -1253,7 +1265,7 @@ export class TaskboardDatabase {
           archived_at, version, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, NULL, NULL, NULL, NULL, NULL,
+          ?, NULL, NULL, NULL, NULL, NULL, NULL,
           ?, ?, ?, ?,
           ?, ?, ?, ?,
           NULL, NULL, NULL,
@@ -2070,13 +2082,13 @@ export class TaskboardDatabase {
         INSERT INTO tasks (
           id, identifier, project_id, title, description, status, priority, labels,
           sort_order, thread_id, thread_codex_project_id, thread_codex_project_kind,
-          thread_codex_host_id, thread_workspace_path,
+          thread_codex_host_id, thread_workspace_path, execution_target,
           creator_type, creator_id, creator_name, creator_avatar_url,
           assignee_type, assignee_id, assignee_name, assignee_avatar_url,
           git_branch, worktree_path, worktree_branch,
           start_date, due_date, recurrence_interval, recurrence_unit,
           archived_at, version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)
       `).run(
         id,
         identifier,
@@ -2088,6 +2100,7 @@ export class TaskboardDatabase {
         JSON.stringify(input.labels),
         sortOrder,
         ...(storedThreadBinding(input.threadBinding, input.threadId) ?? [null, null, null, null, null]),
+        input.executionTarget == null ? null : JSON.stringify(input.executionTarget),
         input.actor.type,
         input.actor.id,
         input.actor.name,
@@ -2152,6 +2165,22 @@ export class TaskboardDatabase {
     if (recurrence && !dueDate) {
       throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires a due date");
     }
+    const executionTarget = Object.hasOwn(changes, "executionTarget")
+      ? changes.executionTarget
+      : current.executionTarget;
+    const executionTargetChanged = Object.hasOwn(changes, "executionTarget")
+      && !sameExecutionTarget(current.executionTarget, executionTarget);
+    if (
+      executionTargetChanged
+      && (Object.hasOwn(changes, "status") ? changes.status : current.status) === "in_progress"
+      && current.threadBinding
+    ) {
+      throw new ApiError(
+        409,
+        "EXECUTION_TARGET_LOCKED",
+        "Move a bound in-progress issue to another status before changing its executionTarget",
+      );
+    }
 
     const columns = {
       projectId: "project_id",
@@ -2180,6 +2209,11 @@ export class TaskboardDatabase {
         values.push(value?.interval ?? null, value?.unit ?? null);
         continue;
       }
+      if (key === "executionTarget") {
+        assignments.push("execution_target = ?");
+        values.push(value === null ? null : JSON.stringify(value));
+        continue;
+      }
       if (key === "assignee") {
         assignments.push(
           "assignee_type = ?",
@@ -2203,8 +2237,10 @@ export class TaskboardDatabase {
       assignments.push("sort_order = ?");
       values.push(row.minimum === null ? 1000 : row.minimum - 1000);
     }
-    const storedBinding = storedThreadBindingForExisting(current, threadBinding, threadId);
-    if (storedBinding && !Object.hasOwn(changes, "projectId")) {
+    const storedBinding = executionTargetChanged
+      ? storedThreadBinding(null, null)
+      : storedThreadBindingForExisting(current, threadBinding, threadId);
+    if (storedBinding && (!Object.hasOwn(changes, "projectId") || executionTargetChanged)) {
       assignments.push(
         "thread_id = ?",
         "thread_codex_project_id = ?",

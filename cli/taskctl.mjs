@@ -50,6 +50,10 @@ const COMMAND_OPTIONS = new Map([
       "priority",
       "labels",
       "thread-id",
+      "execution-codex-project-id",
+      "execution-codex-project-kind",
+      "execution-codex-host-id",
+      "execution-workspace-path",
       "git-branch",
       "worktree-path",
       "worktree-branch",
@@ -71,6 +75,10 @@ const COMMAND_OPTIONS = new Map([
       "priority",
       "labels",
       "thread-id",
+      "execution-codex-project-id",
+      "execution-codex-project-kind",
+      "execution-codex-host-id",
+      "execution-workspace-path",
       "git-branch",
       "worktree-path",
       "worktree-branch",
@@ -159,6 +167,8 @@ Actions:
     [--description TEXT | --description-file FILE]
     [--status STATUS] [--priority PRIORITY] [--labels a,b]
     [--thread-id ID]
+    [--execution-codex-project-id ID --execution-codex-project-kind local|remote
+     --execution-codex-host-id ID --execution-workspace-path PATH]
     [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]
     [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]
     [--recurrence-interval N --recurrence-unit day|week|month|year] [--json]
@@ -167,6 +177,8 @@ Actions:
     [--description TEXT | --description-file FILE]
     [--status STATUS] [--priority PRIORITY] [--labels a,b]
     [--thread-id ID]
+    [--execution-codex-project-id ID --execution-codex-project-kind local|remote
+     --execution-codex-host-id ID --execution-workspace-path PATH]
     [--git-branch BRANCH | --worktree-path PATH [--worktree-branch BRANCH]]
     [--start-date YYYY-MM-DD] [--due-date YYYY-MM-DD]
     [--recurrence-interval N --recurrence-unit day|week|month|year]
@@ -869,6 +881,7 @@ async function createIssue(api, options, overrides) {
   assertPriority(priority);
 
   const developmentContext = developmentContextFromOptions(options, overrides);
+  const executionTarget = executionTargetFromOptions(options);
   const recurrence = recurrenceFromOptions(options);
   const threadId = resolveThreadId(options, overrides);
   return api.request("POST", "/api/tasks", {
@@ -879,6 +892,7 @@ async function createIssue(api, options, overrides) {
     priority,
     labels: parseLabels(options.labels),
     threadId,
+    ...optionalField("executionTarget", executionTarget),
     ...optionalField("developmentContext", developmentContext),
     ...optionalField("startDate", options["start-date"]),
     ...optionalField("dueDate", options["due-date"]),
@@ -891,6 +905,7 @@ async function updateIssue(api, taskId, options, overrides) {
   if (options.priority !== undefined) assertPriority(options.priority);
 
   const developmentContext = developmentContextFromOptions(options, overrides);
+  const executionTarget = executionTargetFromOptions(options);
   const recurrence = recurrenceFromOptions(options);
   const threadId = resolveThreadId(options, overrides);
   const patch = {
@@ -899,6 +914,7 @@ async function updateIssue(api, taskId, options, overrides) {
     ...optionalField("status", options.status),
     ...optionalField("priority", options.priority),
     ...optionalField("labels", options.labels === undefined ? undefined : parseLabels(options.labels)),
+    ...optionalField("executionTarget", executionTarget),
     ...optionalField("developmentContext", developmentContext),
     ...optionalField("startDate", options["start-date"]),
     ...optionalField("dueDate", options["due-date"]),
@@ -975,6 +991,45 @@ function threadBindingFromOptions(options) {
     throw usageError("--binding-workspace-path must be absolute");
   }
   return { threadId, codexProjectId, codexProjectKind, codexHostId, workspacePath };
+}
+
+function executionTargetFromOptions(options) {
+  const fields = [
+    options["execution-codex-project-id"],
+    options["execution-codex-project-kind"],
+    options["execution-codex-host-id"],
+    options["execution-workspace-path"],
+  ];
+  if (fields.every((field) => field === undefined)) return undefined;
+  if (fields.some((field) => field === undefined)) {
+    throw usageError("Execution target requires project id, kind, host id, and workspace path");
+  }
+  const codexProjectId = options["execution-codex-project-id"].trim();
+  const codexProjectKind = options["execution-codex-project-kind"];
+  const codexHostId = options["execution-codex-host-id"].trim();
+  const workspacePath = options["execution-workspace-path"];
+  if (!codexProjectId || codexProjectId.length > 256) {
+    throw usageError("--execution-codex-project-id must contain 1 to 256 characters");
+  }
+  if (codexProjectKind !== "local" && codexProjectKind !== "remote") {
+    throw usageError("--execution-codex-project-kind must be local or remote");
+  }
+  if (
+    !codexHostId
+    || codexHostId.length > 256
+    || (codexProjectKind === "local" && codexHostId !== "local")
+    || (codexProjectKind === "remote" && codexHostId === "local")
+  ) {
+    throw usageError("--execution-codex-host-id does not match the project kind");
+  }
+  if (
+    workspacePath.length > 4096
+    || workspacePath.includes("\0")
+    || (!path.posix.isAbsolute(workspacePath) && !path.win32.isAbsolute(workspacePath))
+  ) {
+    throw usageError("--execution-workspace-path must be an absolute path up to 4096 characters");
+  }
+  return { codexProjectId, codexProjectKind, codexHostId, workspacePath };
 }
 
 async function archiveIssue(api, taskId, options, overrides, action) {
