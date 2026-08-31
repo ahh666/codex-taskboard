@@ -108,6 +108,19 @@ let quotaPoliciesWritePromise = Promise.resolve();
 const taskConversationAppServerTimeoutMs = 30_000;
 const remoteAutomationTurnTimeoutMs = 30 * 60_000;
 
+function stableCodexUserId(account) {
+  const email = account?.account?.type === "chatgpt"
+    && typeof account.account.email === "string"
+    ? account.account.email.trim().toLowerCase()
+    : "";
+  if (!email) throw new Error("The current Codex ChatGPT account email is unavailable");
+  const digest = createHash("sha256")
+    .update("codex-taskboard-user\0")
+    .update(email)
+    .digest("hex");
+  return `codex-user-${digest}`;
+}
+
 function parseArgs(argv) {
   const options = {
     port: defaultCodexDebuggingPort,
@@ -2266,6 +2279,15 @@ function installTaskboardHostBinding(
       isAuthorizedContext: (executionContextId) => executionContextId === activeContextId,
       parseAutomationRequest: parseTaskboardAutomationHostRequest,
       ensure: () => supervisor.ensure({ force: true }),
+      readCurrentUser: async () => ({
+        userId: stableCodexUserId(await requestCodexAppServerViaCdp(
+          cdp,
+          undefined,
+          "local",
+          "account/read",
+          { refreshToken: false },
+        )),
+      }),
       loadFrame: (request) => loadTaskboardFrameViaCdp(
         cdp,
         request.frameName,
