@@ -55,6 +55,7 @@ function fixtureHtml(origin) {
     <style>
       html, body { width: 1200px; height: 800px; margin: 0; }
       aside { position: absolute; width: 200px; height: 800px; }
+      [data-app-action-sidebar-section] { position: absolute; top: 200px; }
       main { position: absolute; left: 200px; width: 1000px; height: 700px; }
       main > header { position: absolute; z-index: 2; width: 1000px; height: 48px; }
       #surface { width: 1000px; height: 700px; }
