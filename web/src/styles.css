@@ -785,7 +785,7 @@ kbd {
   display: flex;
   flex-direction: column;
   width: min(240px, calc(100vw - 24px));
-  max-height: min(480px, calc(100vh - 56px));
+  max-height: 80vh;
   padding: 5px;
   overflow: hidden;
   border: var(--border-hairline) solid var(--border-strong);

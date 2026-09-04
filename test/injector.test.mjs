@@ -213,6 +213,13 @@ test("the package injection command remains resident for tab-triggered recovery"
   assert.match(source, /__codexTaskboardHostStartupTokenV1/);
 });
 
+test("the existing-Codex fallback opens its deep link with the platform default application", () => {
+  assert.match(
+    source,
+    /deepLink\.searchParams\.set\("browserUrl", taskboardPageUrl\);\s*await openWithDefaultApplication\(deepLink\.toString\(\)\);/,
+  );
+});
+
 test("attach reconciles the renderer against a hashed current injection source", () => {
   assert.match(source, /createHash\("sha256"\)/);
   assert.match(source, /__CODEX_TASKBOARD_SOURCE_HASH__/);
