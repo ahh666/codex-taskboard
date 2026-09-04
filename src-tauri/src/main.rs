@@ -74,6 +74,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const BETA_UPDATER_ENDPOINT: &str =
+    "https://raw.githubusercontent.com/chuspeeism/dashi-taskboard/beta-updater/latest.json";
 // Unique whole-directory snapshots shipped from app-v0.2.0 through v1.1.2.
 const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
     "eeaaa5d71a2c47688bf62a5eb9f45e9138fe49eb636a46cfd6af8a0f8853e2e0",
@@ -86,6 +88,26 @@ const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
 const TASKBOARD_PREFERRED_PORT: u16 = 47823;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const TASKBOARD_LISTEN_FD: i32 = 5;
+#[cfg(target_os = "macos")]
+const MACOS_BUNDLE_MIGRATION_SOURCE_ENV: &str =
+    "CODEX_TASKBOARD_MACOS_BUNDLE_MIGRATION_SOURCE";
+#[cfg(target_os = "macos")]
+const MACOS_BUNDLE_MIGRATION_BETA_AUTOSTART_ENV: &str =
+    "CODEX_TASKBOARD_MACOS_BUNDLE_MIGRATION_BETA_AUTOSTART";
+
+fn release_version() -> &'static str {
+    option_env!("CODEX_TASKBOARD_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn is_beta_release() -> bool {
+    release_version().contains("-beta.")
+}
+
+#[cfg(target_os = "macos")]
+struct MacosBundleMigration {
+    source_executable: PathBuf,
+    beta_autostart_was_enabled: bool,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -407,6 +429,267 @@ fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_app_path_from_executable(executable: &Path) -> Option<PathBuf> {
+    let macos_directory = executable.parent()?;
+    if macos_directory.file_name()? != std::ffi::OsStr::new("MacOS") {
+        return None;
+    }
+    let contents_directory = macos_directory.parent()?;
+    if contents_directory.file_name()? != std::ffi::OsStr::new("Contents") {
+        return None;
+    }
+    let app_path = contents_directory.parent()?;
+    (app_path.extension()? == std::ffi::OsStr::new("app")).then(|| app_path.to_path_buf())
+}
+
+#[cfg(target_os = "macos")]
+fn append_macos_startup_log(line: &str) {
+    let Some(home_directory) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return;
+    };
+    let log_directory = home_directory.join("Library/Logs/Codex Taskboard");
+    if fs::create_dir_all(&log_directory).is_err() {
+        return;
+    }
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_directory.join("codex-taskboard-launcher.log"))
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_macos_bundle_migration_lock() -> Result<File, String> {
+    let home_directory = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is unavailable".to_string())?;
+    let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
+    fs::create_dir_all(&data_directory).map_err(|error| {
+        format!(
+            "无法创建应用数据目录 {}：{error}",
+            data_directory.display()
+        )
+    })?;
+    let lock_path = data_directory.join("launcher.lock");
+    let deadline = Instant::now() + LAUNCHER_STOP_TIMEOUT;
+    loop {
+        match acquire_instance_lock(&lock_path) {
+            Ok(Some(file)) => return Ok(file),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                return Err(format!(
+                    "等待现有 App 退出超时，无法迁移 {}",
+                    lock_path.display()
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "无法锁定 App 迁移路径 {}：{error}",
+                    lock_path.display()
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_macos_app_bundle(source: &Path, destination: &Path) -> Result<(), String> {
+    match fs::rename(source, destination) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(error) => {
+            return Err(format!(
+                "无法将 {} 改名为 {}：{error}",
+                source.display(),
+                destination.display()
+            ));
+        }
+    }
+
+    let script = r#"on run argv
+set sourcePath to item 1 of argv
+set destinationPath to item 2 of argv
+do shell script ("/bin/mv " & quoted form of sourcePath & " " & quoted form of destinationPath) with administrator privileges
+end run"#;
+    let output = StdCommand::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .arg(source)
+        .arg(destination)
+        .output()
+        .map_err(|error| format!("无法请求 App 改名授权：{error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "App 改名授权未完成".into()
+        } else {
+            format!("App 改名授权未完成：{detail}")
+        });
+    }
+    if source.exists() || !destination.is_dir() {
+        return Err(format!(
+            "App 改名后路径状态不正确：{} -> {}",
+            source.display(),
+            destination.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn take_macos_bundle_migration_marker() -> Result<Option<MacosBundleMigration>, String> {
+    let source_executable =
+        std::env::var_os(MACOS_BUNDLE_MIGRATION_SOURCE_ENV).map(PathBuf::from);
+    let beta_autostart_marker =
+        std::env::var_os(MACOS_BUNDLE_MIGRATION_BETA_AUTOSTART_ENV);
+    std::env::remove_var(MACOS_BUNDLE_MIGRATION_SOURCE_ENV);
+    std::env::remove_var(MACOS_BUNDLE_MIGRATION_BETA_AUTOSTART_ENV);
+    let Some(source_executable) = source_executable else {
+        return Ok(None);
+    };
+    let beta_autostart_was_enabled =
+        beta_autostart_marker.as_deref() == Some(std::ffi::OsStr::new("1"));
+    if !is_beta_release() {
+        return Err("稳定版不能恢复 Beta App bundle migration marker".into());
+    }
+
+    let current_executable =
+        std::env::current_exe().map_err(|error| format!("无法定位当前可执行文件：{error}"))?;
+    let current_executable = fs::canonicalize(&current_executable)
+        .map_err(|error| format!("无法解析当前可执行文件路径：{error}"))?;
+    let current_app = macos_app_path_from_executable(&current_executable)
+        .ok_or_else(|| "当前可执行文件不在 macOS App bundle 内".to_string())?;
+    if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard Beta.app")) {
+        return Err(format!(
+            "macOS App bundle migration marker 只能由改名后的 Beta App 恢复：{}",
+            current_app.display()
+        ));
+    }
+    let relative_executable = current_executable
+        .strip_prefix(&current_app)
+        .map_err(|error| format!("无法解析 Beta App 可执行文件相对路径：{error}"))?;
+    let expected_source_executable = current_app
+        .parent()
+        .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
+        .join("Codex Taskboard.app")
+        .join(relative_executable);
+    if source_executable != expected_source_executable {
+        return Err(format!(
+            "macOS App bundle migration source marker 不匹配：{} != {}",
+            source_executable.display(),
+            expected_source_executable.display()
+        ));
+    }
+
+    Ok(Some(MacosBundleMigration {
+        source_executable,
+        beta_autostart_was_enabled,
+    }))
+}
+
+#[cfg(target_os = "macos")]
+fn migrate_macos_beta_app_bundle_name() -> Result<Option<MacosBundleMigration>, String> {
+    if let Some(migration) = take_macos_bundle_migration_marker()? {
+        return Ok(Some(migration));
+    }
+    if !is_beta_release() {
+        return Ok(None);
+    }
+
+    let current_executable =
+        std::env::current_exe().map_err(|error| format!("无法定位当前可执行文件：{error}"))?;
+    let current_executable = fs::canonicalize(&current_executable)
+        .map_err(|error| format!("无法解析当前可执行文件路径：{error}"))?;
+    let Some(current_app) = macos_app_path_from_executable(&current_executable) else {
+        return Ok(None);
+    };
+    if current_app.file_name() == Some(std::ffi::OsStr::new("Codex Taskboard Beta.app")) {
+        return Ok(None);
+    }
+    if current_app.file_name() != Some(std::ffi::OsStr::new("Codex Taskboard.app")) {
+        return Err(format!(
+            "Beta App 当前路径名称不受支持：{}",
+            current_app.display()
+        ));
+    }
+    let destination_app = current_app
+        .parent()
+        .ok_or_else(|| format!("无法定位 App 上级目录：{}", current_app.display()))?
+        .join("Codex Taskboard Beta.app");
+    let executable_name = current_executable
+        .file_name()
+        .ok_or_else(|| format!("无法定位 App 可执行文件名：{}", current_executable.display()))?
+        .to_owned();
+    let destination_executable = destination_app
+        .join("Contents/MacOS")
+        .join(executable_name);
+    let instance_lock = wait_for_macos_bundle_migration_lock()?;
+    let fd_flags = unsafe { libc::fcntl(instance_lock.as_raw_fd(), libc::F_GETFD) };
+    if fd_flags < 0
+        || unsafe {
+            libc::fcntl(
+                instance_lock.as_raw_fd(),
+                libc::F_SETFD,
+                fd_flags | libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        return Err(format!(
+            "无法设置 App 迁移锁：{}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    if !current_app.is_dir() {
+        return Err(format!("当前 App 路径不存在：{}", current_app.display()));
+    }
+    if destination_app.exists() {
+        return Err(format!(
+            "目标 App 路径已存在，未覆盖：{}",
+            destination_app.display()
+        ));
+    }
+    let home_directory = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is unavailable".to_string())?;
+    let beta_autostart_was_enabled = home_directory
+        .join("Library/LaunchAgents/Codex Taskboard Beta.plist")
+        .is_file();
+    let beta_autostart_marker = if beta_autostart_was_enabled { "1" } else { "0" };
+
+    rename_macos_app_bundle(&current_app, &destination_app)?;
+    append_macos_startup_log(&format!(
+        "Migrated macOS App bundle {} -> {}",
+        current_app.display(),
+        destination_app.display()
+    ));
+
+    let mut command = StdCommand::new(&destination_executable);
+    command
+        .args(std::env::args_os().skip(1))
+        .env(MACOS_BUNDLE_MIGRATION_SOURCE_ENV, &current_executable)
+        .env(
+            MACOS_BUNDLE_MIGRATION_BETA_AUTOSTART_ENV,
+            beta_autostart_marker,
+        );
+    let exec_error = command.exec();
+
+    match rename_macos_app_bundle(&destination_app, &current_app) {
+        Ok(()) => Err(format!(
+            "无法从改名后的 App 重启，已恢复原路径：{exec_error}"
+        )),
+        Err(rollback_error) => {
+            append_macos_startup_log(&format!(
+                "Failed to restart renamed macOS App: {exec_error}; rollback failed: {rollback_error}"
+            ));
+            std::process::exit(1);
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
     match OpenOptions::new()
@@ -639,6 +922,59 @@ fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
         .kind(MessageDialogKind::Error)
         .buttons(MessageDialogButtons::OkCustom("关闭".into()))
         .blocking_show();
+}
+
+#[cfg(target_os = "macos")]
+fn macos_launch_agent_executable(entry: &Path) -> Option<PathBuf> {
+    if !entry.is_file() {
+        return None;
+    }
+
+    let output = StdCommand::new("/usr/bin/plutil")
+        .args(["-extract", "ProgramArguments.0", "raw", "-o", "-"])
+        .arg(entry)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let executable = String::from_utf8(output.stdout).ok()?;
+    let executable = executable.trim_end_matches(|character| matches!(character, '\r' | '\n'));
+    (!executable.is_empty()).then(|| PathBuf::from(executable))
+}
+
+#[cfg(target_os = "macos")]
+fn sync_macos_autostart_path(
+    app: &AppHandle,
+    home_directory: &Path,
+    migration: &MacosBundleMigration,
+) -> Result<(), String> {
+    if !is_beta_release() {
+        return Ok(());
+    }
+
+    let launch_agents = home_directory.join("Library/LaunchAgents");
+    let stable_entry = launch_agents.join("Codex Taskboard.plist");
+    let migrate_stable_entry = macos_launch_agent_executable(&stable_entry).as_deref()
+        == Some(migration.source_executable.as_path());
+
+    if !migration.beta_autostart_was_enabled && !migrate_stable_entry {
+        return Ok(());
+    }
+    app.autolaunch()
+        .enable()
+        .map_err(|error| format!("无法更新 Beta 开机自启动路径：{error}"))?;
+    if !migrate_stable_entry {
+        return Ok(());
+    }
+    match fs::remove_file(&stable_entry) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "无法移除已迁移的开机自启动项 {}：{error}",
+            stable_entry.display()
+        )),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1626,8 +1962,32 @@ async fn check_for_startup_update(
         snapshot.update_message = "正在检查更新…".into();
         snapshot.update_available = false;
     });
-    let update = app
-        .updater()
+    let beta_release = is_beta_release();
+    let current_release_version = if beta_release {
+        release_version()
+            .parse()
+            .map_err(|error| format!("Invalid release version {}: {error}", release_version()))?
+    } else {
+        app.package_info().version.clone()
+    };
+    let mut updater_builder = app.updater_builder();
+    if beta_release {
+        let beta_endpoint = BETA_UPDATER_ENDPOINT
+            .parse()
+            .map_err(|error| format!("Invalid Beta updater endpoint: {error}"))?;
+        updater_builder = updater_builder
+            .endpoints(vec![beta_endpoint])
+            .map_err(|error| error.to_string())?;
+    }
+    let update = updater_builder
+        .version_comparator(move |current, release| {
+            if beta_release {
+                release.version > current_release_version
+            } else {
+                release.version > current
+            }
+        })
+        .build()
         .map_err(|error| error.to_string())?
         .check()
         .await
@@ -1644,7 +2004,8 @@ async fn check_for_startup_update(
         None => {
             append_log(state, "No update is available");
             update_snapshot(app, state, |snapshot| {
-                snapshot.update_message = "当前已是最新版本。".into();
+                snapshot.update_message =
+                    format!("当前版本 {} 已是最新版本。", snapshot.version.as_str());
                 snapshot.update_available = false;
             });
         }
@@ -1930,8 +2291,9 @@ async fn offer_update(
     };
     let Some(update) = update else {
         if show_current_version {
+            let current_version = state.snapshot.lock().unwrap().version.clone();
             app.dialog()
-                .message("当前已是最新版本。")
+                .message(format!("当前版本 {current_version} 已是最新版本。"))
                 .title("Codex Taskboard 更新")
                 .buttons(MessageDialogButtons::Ok)
                 .blocking_show();
@@ -2007,6 +2369,15 @@ async fn offer_update(
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    let macos_bundle_migration = match migrate_macos_beta_app_bundle_name() {
+        Ok(migration) => migration,
+        Err(error) => {
+            append_macos_startup_log(&format!("macOS App bundle migration failed: {error}"));
+            None
+        }
+    };
+
     let app = tauri::Builder::default()
         .enable_macos_default_menu(false)
         .plugin(tauri_plugin_autostart::init(
@@ -2015,7 +2386,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
             let home_directory = app.path().home_dir()?;
@@ -2062,7 +2433,7 @@ fn main() {
                 app.handle().exit(0);
                 return Ok(());
             };
-            let version = app.package_info().version.to_string();
+            let version = release_version().to_string();
             let state = Arc::new(LauncherState::new(
                 data_directory,
                 log_directory,
@@ -2070,6 +2441,14 @@ fn main() {
                 instance_lock,
             ));
             app.manage(state.clone());
+            #[cfg(target_os = "macos")]
+            if let Some(migration) = macos_bundle_migration.as_ref() {
+                if let Err(error) =
+                    sync_macos_autostart_path(app.handle(), &home_directory, migration)
+                {
+                    append_log(&state, &format!("autostart path sync failed: {error}"));
+                }
+            }
 
             let app_info = MenuItem::with_id(
                 app,
