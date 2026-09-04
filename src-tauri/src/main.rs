@@ -40,7 +40,10 @@ use std::{
     time::{Duration, Instant},
 };
 #[cfg(target_os = "windows")]
-use std::{os::windows::fs::OpenOptionsExt, process::ChildStdin};
+use std::{
+    os::windows::{fs::OpenOptionsExt, process::CommandExt},
+    process::ChildStdin,
+};
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
 use tauri::{
@@ -63,7 +66,7 @@ use windows::{
                 RM_UNIQUE_PROCESS,
             },
             Threading::{
-                GetProcessTimes, OpenProcess, WaitForSingleObject,
+                GetProcessTimes, OpenProcess, WaitForSingleObject, CREATE_NO_WINDOW,
                 PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
             },
         },
@@ -147,7 +150,7 @@ struct LauncherState {
     lifecycle: Mutex<()>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     taskboard_listener: Mutex<Option<TcpListener>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     codex_port: Mutex<Option<u16>>,
     #[cfg(target_os = "windows")]
     child_control: Mutex<Option<ChildStdin>>,
@@ -397,7 +400,7 @@ impl LauncherState {
             lifecycle: Mutex::new(()),
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             taskboard_listener: Mutex::new(None),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             codex_port: Mutex::new(None),
             #[cfg(target_os = "windows")]
             child_control: Mutex::new(None),
@@ -861,7 +864,7 @@ fn taskboard_listener(_state: &LauncherState) -> Result<(Option<i32>, u16), Stri
     Ok((None, port))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn codex_port(state: &LauncherState) -> Result<u16, String> {
     let mut port = state.codex_port.lock().unwrap();
     if let Some(port) = *port {
@@ -1125,7 +1128,7 @@ fn ordinary_codex_process(app_path: &Path, codex_profile: &Path) -> Result<Optio
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$ErrorActionPreference = 'Stop'; $app = $env:CODEX_TASKBOARD_CODEX_APP_PATH; $profile = $env:CODEX_TASKBOARD_CODEX_PROFILE; $name = [IO.Path]::GetFileName($app); $all = @(Get-CimInstance Win32_Process -Filter \"Name = '$name'\" | Where-Object { $_.ExecutablePath -eq $app }); $pids = @{}; foreach ($item in $all) { $pids[[uint32]$item.ProcessId] = $true }; $process = $all | Where-Object { $command = [string]$_.CommandLine; $isRoot = -not $pids.ContainsKey([uint32]$_.ParentProcessId); $isManaged = $command.IndexOf('--remote-debugging-pipe', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $command.IndexOf(('--user-data-dir=' + $profile), [StringComparison]::OrdinalIgnoreCase) -ge 0; $isRoot -and -not $isManaged } | Select-Object -First 1; if ($null -ne $process) { [Console]::Out.Write($process.ProcessId) }",
+            "$ErrorActionPreference = 'Stop'; $app = $env:CODEX_TASKBOARD_CODEX_APP_PATH; $profile = $env:CODEX_TASKBOARD_CODEX_PROFILE; $name = [IO.Path]::GetFileName($app); $all = @(Get-CimInstance Win32_Process -Filter \"Name = '$name'\" | Where-Object { $_.ExecutablePath -eq $app }); $pids = @{}; foreach ($item in $all) { $pids[[uint32]$item.ProcessId] = $true }; $process = $all | Where-Object { $command = [string]$_.CommandLine; $isRoot = -not $pids.ContainsKey([uint32]$_.ParentProcessId); $usesManagedProfile = $command.IndexOf('--user-data-dir', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $command.IndexOf($profile, [StringComparison]::OrdinalIgnoreCase) -ge 0; $usesPrivateCdp = $command.IndexOf('--remote-debugging-pipe', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $command.IndexOf('--remote-debugging-port', [StringComparison]::OrdinalIgnoreCase) -ge 0; $isManaged = $usesManagedProfile -and $usesPrivateCdp; $isRoot -and -not $isManaged } | Select-Object -First 1; if ($null -ne $process) { [Console]::Out.Write($process.ProcessId) }",
         ])
         .env("CODEX_TASKBOARD_CODEX_APP_PATH", app_path)
         .env("CODEX_TASKBOARD_CODEX_PROFILE", codex_profile)
@@ -1668,7 +1671,7 @@ fn start_launcher_locked(
         .map_err(|error| error.to_string())?
     };
     let (_taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let codex_port = codex_port(state)?.to_string();
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();
@@ -1689,13 +1692,15 @@ fn start_launcher_locked(
         .unwrap_or_else(|| home_directory.join(".config"))
         .join("Codex");
     let mut command = StdCommand::new(&node_path);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW.0);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     command.arg(&injector_path);
     #[cfg(target_os = "windows")]
     command.arg(r"scripts\codex-injector.mjs");
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     command.args(["--launch", "--watch", "--open", "--port", &codex_port]);
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     command.args(["--launch", "--watch", "--open", "--cdp-pipe"]);
     command
         .args(["--startup-token", &instance_token, "--app-path"])
@@ -1762,14 +1767,14 @@ fn start_launcher_locked(
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
     });
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     append_log(
         state,
         &format!(
             "Started launcher child {pid} on Taskboard {taskboard_port} with Codex CDP {codex_port}"
         ),
     );
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     append_log(
         state,
         &format!(
