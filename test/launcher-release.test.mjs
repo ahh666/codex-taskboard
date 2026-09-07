@@ -84,3 +84,21 @@ test("Windows CI uploads the NSIS installer with the pinned Node 24 artifact act
 test("the launcher minimum system version matches the current Codex client requirement", () => {
   assert.equal(tauriConfig.bundle.macOS.minimumSystemVersion, "14.0");
 });
+
+test("update confirmation stays responsive while the verified download is shared", () => {
+  assert.match(launcherSource, /pending_update: tauri::async_runtime::Mutex<Option<PendingUpdate>>/);
+  assert.match(launcherSource, /download: Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>/);
+  assert.match(
+    launcherSource,
+    /async fn prepare_available_update\([\s\S]*?tauri::async_runtime::spawn\(download\.clone\(\)\)/,
+  );
+  assert.match(
+    launcherSource,
+    /Showing update prompt for \{version\}[\s\S]*?UpdateDialog::prompt\(app, &version\)[\s\S]*?update\.download\.clone\(\)\.await/,
+  );
+  assert.match(launcherSource, /dialog\.set_progress\(&snapshot\.update_message, progress, false\)/);
+  assert.match(
+    launcherSource,
+    /MenuItem::with_id\(app, "check-update", "检查更新", true, None::<&str>\)/,
+  );
+});
