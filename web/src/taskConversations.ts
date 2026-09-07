@@ -85,6 +85,18 @@ function newerTimestamp(left: string, right: string) {
   return left > right ? left : right;
 }
 
+export function indexAiThreadsByTask(aiThreads: AiChatThread[]) {
+  const index = new Map<string, AiChatThread[]>();
+  for (const thread of aiThreads) {
+    const taskId = thread.origin.issueId;
+    if (!taskId) continue;
+    const threads = index.get(taskId);
+    if (threads) threads.push(thread);
+    else index.set(taskId, [thread]);
+  }
+  return index;
+}
+
 export function taskConversations(task: Task, aiThreads: AiChatThread[]) {
   const items = new Map<string, TaskConversationItem>();
 
@@ -173,11 +185,13 @@ export function taskCardPresentation(
   } | null | undefined = undefined,
 ): TaskCardPresentation {
   const conversations = taskConversations(task, aiThreads);
-  const runningAi = conversations
-    .filter((conversation) => conversation.currentRun?.status === "running")
-    .sort((left, right) => (
-      (right.currentRun?.startedAt ?? "").localeCompare(left.currentRun?.startedAt ?? "")
-    ))[0];
+  let runningAi: TaskConversationItem | undefined;
+  for (const conversation of conversations) {
+    if (conversation.currentRun?.status !== "running") continue;
+    if (!runningAi || (conversation.currentRun.startedAt ?? "").localeCompare(
+      runningAi.currentRun?.startedAt ?? "",
+    ) > 0) runningAi = conversation;
+  }
   const normalizedRunningNativeThreadId = normalizeCodexThreadId(runningNativeThreadId);
   const runningNative = task.status === "in_progress" && normalizedRunningNativeThreadId
     ? conversations.find((conversation) => (

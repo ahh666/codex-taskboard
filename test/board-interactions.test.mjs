@@ -153,6 +153,14 @@ test("issues expose processing conversations without manual binding", () => {
   assert.match(contextMenuSource, /onOpenInThread/);
 });
 
+test("processing timers update only their own task-card label", () => {
+  assert.doesNotMatch(appSource, /processingNow|hasRunningTask/);
+  assert.doesNotMatch(boardColumnSource, /now: number|now=\{now\}/);
+  assert.doesNotMatch(cardSource, /interface TaskCardProps \{[^}]*\bnow: number/);
+  assert.match(cardSource, /function ProcessingLabel\([\s\S]*?useState\(Date\.now\)[\s\S]*?window\.setInterval/);
+  assert.match(cardSource, /<ProcessingLabel processing=\{presentation\.processing\} \/>/);
+});
+
 test("comments upload and render their own attachments in the content flow", () => {
   assert.match(apiSource, /export async function uploadCommentAttachment/);
   assert.match(apiSource, /\/api\/comments\/\$\{encodeURIComponent\(commentId\)\}\/attachments/);

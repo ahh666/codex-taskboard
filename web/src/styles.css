@@ -3188,7 +3188,7 @@ kbd {
 .issue-description-document input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  margin: 4px 0 0;
+  margin: calc((1lh - 14px) / 2) 0 0;
   accent-color: var(--accent);
   pointer-events: none;
 }
@@ -3979,6 +3979,7 @@ kbd {
   flex-direction: column;
   min-width: 0;
   gap: 2px;
+  line-height: 1.4;
 }
 
 .attachment-copy strong {
