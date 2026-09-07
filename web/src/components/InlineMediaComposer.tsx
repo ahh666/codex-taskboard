@@ -1681,11 +1681,11 @@ function segmentsFromEditorDocument(
   return selfContainedClipboardSegments(normalizeSegments(restored.map((segment, index) => {
     if (segment.type !== "text") return segment;
     let value = segment.text;
-    if (isMediaAtomSegment(restored[index - 1]) && value.startsWith("\n\n")) {
-      value = value.slice(2);
+    if (isTaskboardAttachmentMedia(restored[index - 1]) && value.startsWith("\n")) {
+      value = value.slice(1);
     }
-    if (isMediaAtomSegment(restored[index + 1]) && value.endsWith("\n\n")) {
-      value = value.slice(0, -2);
+    if (isTaskboardAttachmentMedia(restored[index + 1]) && value.endsWith("\n")) {
+      value = value.slice(0, -1);
     }
     return value === segment.text ? segment : { ...segment, text: value };
   })));
@@ -2024,7 +2024,7 @@ export const InlineMediaComposer = forwardRef<InlineMediaComposerHandle, InlineM
         },
         stopEvent(event) {
           const target = event.target;
-          return target instanceof Element && Boolean(target.closest("button, video, a"));
+          return target instanceof Element && Boolean(target.closest("button, a"));
         },
         ignoreMutation() {
           return true;

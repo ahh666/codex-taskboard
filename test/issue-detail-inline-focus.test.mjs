@@ -4,6 +4,14 @@ import { test } from "node:test";
 
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const detailSource = await readFile(new URL("../web/src/components/TaskDetail.tsx", import.meta.url), "utf8");
+const composerSource = await readFile(
+  new URL("../web/src/components/InlineMediaComposer.tsx", import.meta.url),
+  "utf8",
+);
+const composerStyles = await readFile(
+  new URL("../web/src/components/InlineMediaComposer.css", import.meta.url),
+  "utf8",
+);
 
 test("issue title and description keep Linear-style inline editing when focused", () => {
   assert.match(
@@ -27,4 +35,28 @@ test("editing and composing comments do not add focus chrome", () => {
     /<InlineMediaComposer[\s\S]*?className="comment-inline-media"[\s\S]*?ariaLabel=\{text\("留下评论", "Leave a comment"\)\}/,
   );
   assert.doesNotMatch(styles, /\.comment-composer:focus-within\s*\{/);
+});
+
+test("inline videos use the editor node-selection path", () => {
+  assert.match(
+    composerSource,
+    /stopEvent\(event\) \{[\s\S]*?target\.closest\("button, a"\)/,
+  );
+  assert.doesNotMatch(composerSource, /target\.closest\("button, video, a"\)/);
+});
+
+test("task checkboxes and attachment blocks retain compact document layout", () => {
+  assert.match(
+    composerStyles,
+    /li\.task-list-item > input\[type="checkbox"\] \{[^}]*margin: calc\(\(1lh - 14px\) \/ 2\) 0 0;/,
+  );
+  assert.match(
+    composerSource,
+    /isTaskboardAttachmentMedia\(restored\[index - 1\]\) && value\.startsWith\("\\n"\)/,
+  );
+  assert.match(
+    composerSource,
+    /isTaskboardAttachmentMedia\(restored\[index \+ 1\]\) && value\.endsWith\("\\n"\)/,
+  );
+  assert.match(styles, /\.attachment-copy \{[^}]*line-height: 1\.4;/);
 });
