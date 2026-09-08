@@ -13,6 +13,9 @@ concurrency:
   group: release-macos-${{ github.ref_name }}
   cancel-in-progress: false
 
+env:
+  MACOS_SIGNING_MODE: ${{ vars.MACOS_SIGNING_MODE || 'signed' }}
+
 jobs:
   release-linux:
     name: Build Ubuntu 24.04 x64 packages
@@ -129,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   release-macos:
-    name: Build signed universal macOS app
+    name: Build universal macOS app
     needs:
       - release-linux
       - release-windows-preview
@@ -158,6 +161,10 @@ jobs:
           TAG_FORCED: ${{ github.event.forced }}
         run: |
           set -euo pipefail
+          case "$MACOS_SIGNING_MODE" in
+            signed|adhoc) ;;
+            *) echo "MACOS_SIGNING_MODE 必须为 signed 或 adhoc。" >&2; exit 1 ;;
+          esac
           if [[ "$TAG_CREATED" != "true" || "$TAG_DELETED" == "true" || "$TAG_FORCED" == "true" ]]; then
             echo "发布标签必须是首次创建，不能删除或强制更新。" >&2
             exit 1
@@ -249,6 +256,7 @@ jobs:
         run: npm run app:prepare -- --target universal-apple-darwin
 
       - name: Import Developer ID certificate
+        if: env.MACOS_SIGNING_MODE == 'signed'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -276,6 +284,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
 
       - name: Prepare App Store Connect API key
+        if: env.MACOS_SIGNING_MODE == 'signed'
         env:
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
@@ -295,9 +304,15 @@ jobs:
       - name: Sign App with separate Node.js policy
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: node scripts/sign-macos-app.mjs "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+        run: |
+          SIGNING_ARGS=("src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app")
+          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
+            SIGNING_ARGS+=(--ad-hoc)
+          fi
+          node scripts/sign-macos-app.mjs "${SIGNING_ARGS[@]}"
 
       - name: Notarize and staple App
+        if: env.MACOS_SIGNING_MODE == 'signed'
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -315,7 +330,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           spctl -a -t exec -vv "$APP_PATH"
 
-      - name: Create, sign, notarize, and staple DMG
+      - name: Create and sign DMG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -340,6 +355,11 @@ jobs:
           )
           mv "$BUNDLE_ROOT/macos/$RAW_DMG_NAME" "$BUNDLE_ROOT/dmg/$RELEASE_DMG_NAME"
           DMG_PATH="$BUNDLE_ROOT/dmg/$RELEASE_DMG_NAME"
+          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
+            codesign --force --sign - "$DMG_PATH"
+            codesign --verify --strict --verbose=2 "$DMG_PATH"
+            exit 0
+          fi
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
           xcrun notarytool submit "$DMG_PATH" \
             --key-id "$APPLE_API_KEY" \
@@ -362,14 +382,18 @@ jobs:
             "$BUNDLE_ROOT/release" \
             "$RELEASE_TAG"
 
-      - name: Verify signed release artifacts
+      - name: Verify release artifacts
         run: |
           set -euo pipefail
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           APP_PATH="$BUNDLE_ROOT/macos/Codex Taskboard.app"
           DMG_PATH="$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
           RELEASE_ROOT="$BUNDLE_ROOT/release"
-          npm run app:verify-release -- "$APP_PATH" "$DMG_PATH" "$RELEASE_ROOT" "$RELEASE_TAG"
+          VERIFY_ARGS=("$APP_PATH" "$DMG_PATH" "$RELEASE_ROOT" "$RELEASE_TAG")
+          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
+            VERIFY_ARGS+=(--ad-hoc)
+          fi
+          npm run app:verify-release -- "${VERIFY_ARGS[@]}"
 
       - name: Restore unsigned Windows x64 Preview
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -394,8 +418,8 @@ jobs:
           jq \
             --rawfile deb_signature "$LINUX_DEB.sig" \
             --rawfile appimage_signature "$LINUX_APPIMAGE.sig" \
-            --arg deb_url "https://github.com/chuspeeism/dashi-taskboard/releases/download/$RELEASE_TAG/$LINUX_DEB_NAME" \
-            --arg appimage_url "https://github.com/chuspeeism/dashi-taskboard/releases/download/$RELEASE_TAG/$LINUX_APPIMAGE_NAME" \
+            --arg deb_url "https://github.com/ahh666/codex-taskboard/releases/download/$RELEASE_TAG/$LINUX_DEB_NAME" \
+            --arg appimage_url "https://github.com/ahh666/codex-taskboard/releases/download/$RELEASE_TAG/$LINUX_APPIMAGE_NAME" \
             '.platforms["linux-x86_64-deb"] = {signature: $deb_signature, url: $deb_url}
              | .platforms["linux-x86_64-appimage"] = {signature: $appimage_signature, url: $appimage_url}' \
             "$LATEST_PATH" > "$LATEST_PATH.linux"
@@ -461,13 +485,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
+          RELEASE_NOTES="$RUNNER_TEMP/release-notes.md"
+          cat > "$RELEASE_NOTES" <<'NOTES'
+          - 提供 macOS 通用 DMG，支持 Apple Silicon 和 Intel Mac。
+          - 提供 Ubuntu 24.04 x64 的 DEB 和 AppImage 安装包。
+          - 提供 Windows x64 安装包 Preview；当前未签名，不支持自动更新。
+          - macOS 和 Linux 内置自动更新，更新包使用独立签名进行验证。
+          NOTES
+          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
+            cat >> "$RELEASE_NOTES" <<'NOTES'
+
+          macOS 安装说明：本版本使用 ad-hoc 代码签名，未经 Apple Developer ID 签名和公证。从 DMG 将 App 拖入“应用程序”后首次打开可能被 macOS 拦截；确认下载来源可信后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”。无需关闭系统全局安全检查。
+          NOTES
+          fi
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --target "$GITHUB_SHA" \
             --draft \
             --title "Codex Taskboard $RELEASE_TAG" \
-            --generate-notes \
+            --notes-file "$RELEASE_NOTES" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
           gh release upload "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
@@ -534,67 +571,68 @@ jobs:
             exit 1
           fi
 
-          if [[ -z "$RULESET_TOKEN" ]]; then
-            echo "缺少 RELEASE_RULESET_TOKEN，无法确认标签 Ruleset 的绕过者。" >&2
-            exit 1
-          fi
-          if ! RULESET_IDS="$(GH_TOKEN="$RULESET_TOKEN" gh api \
-            --header "$API_VERSION_HEADER" \
-            --paginate \
-            "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
-            --jq '.[].id')"; then
-            echo "无法读取标签 Ruleset。" >&2
-            exit 1
-          fi
-
-          TAG_RULE_PROTECTED=false
-          while IFS= read -r RULESET_ID; do
-            [[ -n "$RULESET_ID" ]] || continue
-            if ! RULESET="$(GH_TOKEN="$RULESET_TOKEN" gh api \
-              --header "$API_VERSION_HEADER" \
-              "repos/$GITHUB_REPOSITORY/rulesets/$RULESET_ID")"; then
-              echo "无法读取标签 Ruleset $RULESET_ID。" >&2
+          if [[ "$MACOS_SIGNING_MODE" == "signed" ]]; then
+            if [[ -z "$RULESET_TOKEN" ]]; then
+              echo "缺少 RELEASE_RULESET_TOKEN，无法确认标签 Ruleset 的绕过者。" >&2
               exit 1
             fi
-            if jq -e --arg tag_ref "refs/tags/$RELEASE_TAG" '
-              .target == "tag" and
-              .enforcement == "active" and
-              has("bypass_actors") and
-              ((.bypass_actors | type) == "array") and
-              ((.bypass_actors | length) == 0) and
-              ((.conditions.ref_name.include | type) == "array") and
-              any(
-                .conditions.ref_name.include[]?;
-                . == $tag_ref or
-                (
-                  . == "refs/tags/v*" and
-                  ($tag_ref | test("^refs/tags/v[^/]*$"))
-                )
-              ) and
-              ((.conditions.ref_name.exclude | type) == "array") and
-              ((.conditions.ref_name.exclude | length) == 0) and
-              ((.rules | type) == "array") and
-              any(.rules[]?; .type == "update") and
-              any(.rules[]?; .type == "deletion")
-            ' <<< "$RULESET" >/dev/null; then
-              TAG_RULE_PROTECTED=true
-              break
+            if ! RULESET_IDS="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+              --header "$API_VERSION_HEADER" \
+              --paginate \
+              "repos/$GITHUB_REPOSITORY/rulesets?targets=tag&per_page=100" \
+              --jq '.[].id')"; then
+              echo "无法读取标签 Ruleset。" >&2
+              exit 1
             fi
-          done <<< "$RULESET_IDS"
-          if [[ "$TAG_RULE_PROTECTED" != "true" ]]; then
-            echo "发布前必须启用覆盖当前标签的规则：exclude 为空、禁止更新和删除，并且 bypass_actors 字段可见且为空。" >&2
-            exit 1
-          fi
 
-          if ! IMMUTABLE_RELEASES="$(GH_TOKEN="$RULESET_TOKEN" gh api \
-            --header "$API_VERSION_HEADER" \
-            "repos/$GITHUB_REPOSITORY/immutable-releases")"; then
-            echo "仓库必须在 promotion 前启用 immutable releases。" >&2
-            exit 1
-          fi
-          if ! jq -e '.enabled == true' <<< "$IMMUTABLE_RELEASES" >/dev/null; then
-            echo "仓库的 immutable releases 未启用。" >&2
-            exit 1
+            TAG_RULE_PROTECTED=false
+            while IFS= read -r RULESET_ID; do
+              [[ -n "$RULESET_ID" ]] || continue
+              if ! RULESET="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+                --header "$API_VERSION_HEADER" \
+                "repos/$GITHUB_REPOSITORY/rulesets/$RULESET_ID")"; then
+                echo "无法读取标签 Ruleset $RULESET_ID。" >&2
+                exit 1
+              fi
+              if jq -e --arg tag_ref "refs/tags/$RELEASE_TAG" '
+                .target == "tag" and
+                .enforcement == "active" and
+                has("bypass_actors") and
+                ((.bypass_actors | type) == "array") and
+                ((.bypass_actors | length) == 0) and
+                ((.conditions.ref_name.include | type) == "array") and
+                any(
+                  .conditions.ref_name.include[]?;
+                  . == $tag_ref or
+                  (
+                    . == "refs/tags/v*" and
+                    ($tag_ref | test("^refs/tags/v[^/]*$"))
+                  )
+                ) and
+                ((.conditions.ref_name.exclude | type) == "array") and
+                ((.conditions.ref_name.exclude | length) == 0) and
+                ((.rules | type) == "array") and
+                any(.rules[]?; .type == "update") and
+                any(.rules[]?; .type == "deletion")
+              ' <<< "$RULESET" >/dev/null; then
+                TAG_RULE_PROTECTED=true
+                break
+              fi
+            done <<< "$RULESET_IDS"
+            if [[ "$TAG_RULE_PROTECTED" != "true" ]]; then
+              echo "发布前必须启用覆盖当前标签的规则：exclude 为空、禁止更新和删除，并且 bypass_actors 字段可见且为空。" >&2
+              exit 1
+            fi
+            if ! IMMUTABLE_RELEASES="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+              --header "$API_VERSION_HEADER" \
+              "repos/$GITHUB_REPOSITORY/immutable-releases")"; then
+              echo "仓库必须在 promotion 前启用 immutable releases。" >&2
+              exit 1
+            fi
+            if ! jq -e '.enabled == true' <<< "$IMMUTABLE_RELEASES" >/dev/null; then
+              echo "仓库的 immutable releases 未启用。" >&2
+              exit 1
+            fi
           fi
 
       - name: Restore trusted release asset manifest
@@ -666,11 +704,16 @@ jobs:
             "$MACOS_RELEASE_ROOT/"
           jq 'del(.platforms["linux-x86_64-deb"], .platforms["linux-x86_64-appimage"])' \
             "$DRAFT_ASSETS/latest.json" > "$MACOS_RELEASE_ROOT/latest.json"
-          npm run app:verify-release -- \
-            "$UPDATER_ROOT/Codex Taskboard.app" \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
-            "$MACOS_RELEASE_ROOT" \
+          VERIFY_ARGS=(
+            "$UPDATER_ROOT/Codex Taskboard.app"
+            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+            "$MACOS_RELEASE_ROOT"
             "$RELEASE_TAG"
+          )
+          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
+            VERIFY_ARGS+=(--ad-hoc)
+          fi
+          npm run app:verify-release -- "${VERIFY_ARGS[@]}"
           node scripts/verify-linux-updater.mjs \
             "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
             "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \

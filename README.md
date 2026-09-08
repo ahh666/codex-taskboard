@@ -117,13 +117,15 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 npm run app:build
 ```
 
-Open `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app` from Finder. The DMG is in `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`. If you only want the stable App, download the current DMG from [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest).
+Open `src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app` from Finder. The DMG is in `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`. If you only want the stable App, download the current DMG from [GitHub Releases](https://github.com/ahh666/codex-taskboard/releases/latest).
 
 The App contains its own Node runtime, Taskboard service, built web UI, Skill, CLI wrapper, and injection script. It starts the service, reuses an open Codex with a reachable CDP renderer, opens Taskboard in the native browser panel of an ordinary Codex without CDP, or launches the official Codex app when no Codex is open. It waits for the renderer, injects the sidebar entry when CDP is available, and opens the panel without showing a terminal window. The App can be copied away from this checkout; the target Mac only needs the official Codex app and does not need this repository, a system Node installation, or a separate Codex CLI installation. Taskboard data is stored in `~/Library/Application Support/Codex Taskboard`, and launcher output is written to `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`.
 
+Local builds use ad-hoc code signing. GitHub Releases also support this mode when the repository variable `MACOS_SIGNING_MODE` is `adhoc`; these downloads have no Apple Developer ID signature or notarization and may be blocked on first launch. After confirming that the download is trusted, use **System Settings > Privacy & Security > Open Anyway** without disabling system-wide security checks. macOS and Linux updates are verified with a separate updater signature. The default `signed` release mode requires Developer ID signing and Apple notarization.
+
 ### Linux App: Ubuntu 24.04 x64 packages
 
-The first Linux desktop release supports Ubuntu 24.04 LTS on x64 only. Install the official ChatGPT desktop `.deb` first and confirm that `chatgpt` opens it. Then download either the Codex Taskboard `.deb` or `.AppImage` from [GitHub Releases](https://github.com/chuspeeism/dashi-taskboard/releases/latest). Replace `<file>` below with the downloaded filename.
+The first Linux desktop release supports Ubuntu 24.04 LTS on x64 only. Install the official ChatGPT desktop `.deb` first and confirm that `chatgpt` opens it. Then download either the Codex Taskboard `.deb` or `.AppImage` from [GitHub Releases](https://github.com/ahh666/codex-taskboard/releases/latest). Replace `<file>` below with the downloaded filename.
 
 Install the `.deb` package:
 
@@ -150,8 +152,6 @@ This first release does not support ARM64, Fedora, RPM packages, or other Linux 
 ### Windows code signing
 
 For official Windows releases after the application is approved: **Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).** Current Windows CI artifacts remain unsigned until that approval. See the [Code signing policy](docs/code-signing-policy.md), [Privacy policy](PRIVACY.md), and [Windows uninstall instructions](docs/windows-uninstall.md).
-
-The local build uses ad-hoc code signing for direct verification. A public macOS download still needs Developer ID signing and Apple notarization.
 
 ### Windows App: tray launcher and bundled Taskboard
 

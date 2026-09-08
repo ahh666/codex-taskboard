@@ -20,9 +20,11 @@ const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 const dmgPath = process.argv[3] ? path.resolve(process.argv[3]) : null;
 const releaseDirectory = process.argv[4] ? path.resolve(process.argv[4]) : null;
 const releaseTag = process.argv[5]?.trim();
-if (!appPath || !dmgPath || !releaseDirectory || !releaseTag) {
+const adHoc = process.argv[6] === "--ad-hoc";
+if (!appPath || !dmgPath || !releaseDirectory || !releaseTag
+    || process.argv.length > 7 || (process.argv[6] && !adHoc)) {
   throw new Error(
-    "Usage: verify-macos-release.mjs <App.app> <DMG.dmg> <release-directory> <release-tag>",
+    "Usage: verify-macos-release.mjs <App.app> <DMG.dmg> <release-directory> <release-tag> [--ad-hoc]",
   );
 }
 
@@ -36,6 +38,7 @@ const releasePolicy = JSON.parse(await readFile(
   path.join(projectRoot, "src-tauri", "release.json"),
   "utf8",
 ));
+const expectedSignature = adHoc ? "Signature=adhoc" : `TeamIdentifier=${releasePolicy.appleTeamId}`;
 const stableTag = `v${packageJson.version}`;
 const betaPrefix = `${stableTag}-beta.`;
 const betaNumber = releaseTag.startsWith(betaPrefix)
@@ -77,8 +80,10 @@ function verifyApp(targetPath) {
     throw new Error(`App bundle name must be ${appName}`);
   }
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", targetPath]);
-  run("/usr/bin/xcrun", ["stapler", "validate", targetPath]);
-  run("/usr/sbin/spctl", ["-a", "-t", "exec", "-vv", targetPath]);
+  if (!adHoc) {
+    run("/usr/bin/xcrun", ["stapler", "validate", targetPath]);
+    run("/usr/sbin/spctl", ["-a", "-t", "exec", "-vv", targetPath]);
+  }
   const infoPath = path.join(targetPath, "Contents", "Info.plist");
   for (const nameKey of ["CFBundleDisplayName", "CFBundleName"]) {
     if (plistValue(infoPath, nameKey) !== productName) {
@@ -93,8 +98,8 @@ function verifyApp(targetPath) {
       throw new Error(`Updater App ${versionKey} does not match package.json`);
     }
   }
-  if (!signingDetails(targetPath).includes(`TeamIdentifier=${releasePolicy.appleTeamId}`)) {
-    throw new Error(`App does not use Apple Team ${releasePolicy.appleTeamId}`);
+  if (!signingDetails(targetPath).includes(expectedSignature)) {
+    throw new Error(`App does not have ${expectedSignature}`);
   }
   const launcherPath = path.join(targetPath, "Contents", "MacOS", "codex-taskboard-launcher");
   const embeddedVersion = spawnSync(
@@ -104,8 +109,8 @@ function verifyApp(targetPath) {
   if (embeddedVersion.status !== 0) {
     throw new Error(`Launcher does not embed release version ${releaseVersion}`);
   }
-  if (!signingDetails(launcherPath).includes(`TeamIdentifier=${releasePolicy.appleTeamId}`)) {
-    throw new Error(`Launcher does not use Apple Team ${releasePolicy.appleTeamId}`);
+  if (!signingDetails(launcherPath).includes(expectedSignature)) {
+    throw new Error(`Launcher does not have ${expectedSignature}`);
   }
   const nodePath = path.join(targetPath, "Contents", "MacOS", "node");
   if (!signingDetails(nodePath).includes(`TeamIdentifier=${releasePolicy.nodeTeamId}`)) {
@@ -159,7 +164,7 @@ await verifyUpdaterSignature({
 
 const latest = JSON.parse(await readFile(path.join(releaseDirectory, "latest.json"), "utf8"));
 if (latest.version !== releaseVersion) throw new Error("latest.json version is incorrect");
-const expectedUrl = `https://github.com/chuspeeism/dashi-taskboard/releases/download/${releaseTag}/${artifactName}`;
+const expectedUrl = `https://github.com/ahh666/codex-taskboard/releases/download/${releaseTag}/${artifactName}`;
 const expectedPlatforms = [
   "darwin-aarch64",
   "darwin-x86_64",
@@ -179,11 +184,13 @@ for (const platform of Object.values(latest.platforms)) {
 
 verifyApp(appPath);
 run("/usr/bin/hdiutil", ["verify", dmgPath]);
-run("/usr/bin/xcrun", ["stapler", "validate", dmgPath]);
+if (!adHoc) run("/usr/bin/xcrun", ["stapler", "validate", dmgPath]);
 run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", dmgPath]);
-run("/usr/sbin/spctl", ["-a", "-t", "open", "--context", "context:primary-signature", "-vv", dmgPath]);
-if (!signingDetails(dmgPath).includes(`TeamIdentifier=${releasePolicy.appleTeamId}`)) {
-  throw new Error(`DMG does not use Apple Team ${releasePolicy.appleTeamId}`);
+if (!adHoc) {
+  run("/usr/sbin/spctl", ["-a", "-t", "open", "--context", "context:primary-signature", "-vv", dmgPath]);
+}
+if (!signingDetails(dmgPath).includes(expectedSignature)) {
+  throw new Error(`DMG does not have ${expectedSignature}`);
 }
 
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "codex-taskboard-release-verify."));
@@ -215,10 +222,10 @@ try {
   ]);
   const expectedManifest = JSON.stringify(sourceManifest);
   if (JSON.stringify(updaterManifest) !== expectedManifest) {
-    throw new Error("Updater archive App differs from the notarized source App");
+    throw new Error("Updater archive App differs from the source App");
   }
   if (JSON.stringify(dmgManifest) !== expectedManifest) {
-    throw new Error("DMG App differs from the notarized source App");
+    throw new Error("DMG App differs from the source App");
   }
 
   run(path.join(updaterApp, "Contents", "MacOS", "node"), [
@@ -230,4 +237,4 @@ try {
   await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log(`Verified signed macOS release ${releaseTag}`);
+console.log(`Verified signed macOS release ${releaseTag}${adHoc ? " (ad-hoc, not notarized)" : ""}`);

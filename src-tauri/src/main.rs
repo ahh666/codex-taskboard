@@ -78,7 +78,7 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const LAUNCHER_STOP_TIMEOUT: Duration = Duration::from_secs(36);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const BETA_UPDATER_ENDPOINT: &str =
-    "https://raw.githubusercontent.com/chuspeeism/dashi-taskboard/beta-updater/latest.json";
+    "https://raw.githubusercontent.com/ahh666/codex-taskboard/beta-updater/latest.json";
 // Unique whole-directory snapshots shipped from app-v0.2.0 through v1.1.2.
 const KNOWN_TASKBOARD_SKILL_DIGESTS: [&str; 6] = [
     "eeaaa5d71a2c47688bf62a5eb9f45e9138fe49eb636a46cfd6af8a0f8853e2e0",
