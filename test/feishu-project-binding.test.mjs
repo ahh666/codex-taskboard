@@ -1,10 +1,42 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
 import { createFeishuCli } from "../server/feishu-cli.mjs";
 import { createFeishuIntegration } from "../server/feishu-integration.mjs";
+
+test("Feishu auth status uses the user credential environment and the Taskboard profile", async (t) => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "taskboard-feishu-auth-"));
+  t.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const calls = [];
+  const cli = createFeishuCli({
+    executablePath: "/unused/meegle",
+    dataDirectory,
+    spawn(_executable, args, options) {
+      calls.push({ args, options });
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      queueMicrotask(() => {
+        child.stdout.end(JSON.stringify({ authenticated: false }));
+        child.stderr.end();
+        child.emit("close", 1, null);
+      });
+      return child;
+    },
+  });
+  t.after(() => cli.close());
+
+  assert.equal((await cli.status()).authorized, false);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ["--profile", "taskboard", "auth", "status", "--format", "json"]);
+  assert.equal(calls[0].options.env.HOME, process.env.HOME);
+  assert.equal(calls[0].options.env.USERPROFILE, process.env.USERPROFILE);
+});
 
 test("Feishu view save syncs tasks into the requested project", async () => {
   const syncCalls = [];

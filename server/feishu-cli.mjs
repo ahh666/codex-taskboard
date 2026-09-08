@@ -126,7 +126,6 @@ export function createFeishuCli({
   profileName = PROFILE_NAME,
   host = DEFAULT_HOST,
   spawn = spawnProcess,
-  platform = process.platform,
 } = {}) {
   if (!executablePath) throw new Error("executablePath is required");
   if (!dataDirectory) throw new Error("dataDirectory is required");
@@ -140,9 +139,8 @@ export function createFeishuCli({
   function commandEnvironment() {
     const environment = {
       ...process.env,
-      HOME: homeDirectory,
+      // --profile isolates Meegle settings; changing HOME hides the macOS keychain.
       MEEGLE_HOST: host,
-      ...(platform === "win32" ? { USERPROFILE: homeDirectory } : {}),
     };
     delete environment.CODEX_TASKBOARD_FEISHU_APP_SECRET;
     return environment;
