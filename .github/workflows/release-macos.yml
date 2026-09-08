@@ -623,18 +623,16 @@ jobs:
               echo "发布前必须启用覆盖当前标签的规则：exclude 为空、禁止更新和删除，并且 bypass_actors 字段可见且为空。" >&2
               exit 1
             fi
-            GH_TOKEN="$RULESET_TOKEN"
-          fi
-
-          if ! IMMUTABLE_RELEASES="$(gh api \
-            --header "$API_VERSION_HEADER" \
-            "repos/$GITHUB_REPOSITORY/immutable-releases")"; then
-            echo "仓库必须在 promotion 前启用 immutable releases。" >&2
-            exit 1
-          fi
-          if ! jq -e '.enabled == true' <<< "$IMMUTABLE_RELEASES" >/dev/null; then
-            echo "仓库的 immutable releases 未启用。" >&2
-            exit 1
+            if ! IMMUTABLE_RELEASES="$(GH_TOKEN="$RULESET_TOKEN" gh api \
+              --header "$API_VERSION_HEADER" \
+              "repos/$GITHUB_REPOSITORY/immutable-releases")"; then
+              echo "仓库必须在 promotion 前启用 immutable releases。" >&2
+              exit 1
+            fi
+            if ! jq -e '.enabled == true' <<< "$IMMUTABLE_RELEASES" >/dev/null; then
+              echo "仓库的 immutable releases 未启用。" >&2
+              exit 1
+            fi
           fi
 
       - name: Restore trusted release asset manifest
