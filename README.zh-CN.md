@@ -121,7 +121,7 @@ npm run app:build
 
 该 App 包含自己的 Node 运行时、Taskboard 服务、构建后的 Web UI、Skill、CLI 包装器和注入脚本。它会启动服务，复用已打开且有可用 CDP 渲染器的 Codex；普通 Codex 没有 CDP 时，它会在该实例的原生浏览面板中打开 Taskboard；没有打开 Codex 时，它会启动官方 Codex App。有可用 CDP 时，它会等待渲染器并注入侧边栏入口，然后在不显示终端窗口的情况下打开面板。该 App 可以复制到本检出目录之外；目标 Mac 只需安装官方 Codex App，不需要此仓库、系统 Node 安装或单独的 Codex CLI 安装。Taskboard 数据存储在 `~/Library/Application Support/Codex Taskboard`，启动器输出写入 `~/Library/Logs/Codex Taskboard/codex-taskboard-launcher.log`。
 
-本地构建使用 ad-hoc 代码签名进行直接验证。公开的 macOS 下载仍需要 Developer ID 签名和 Apple 公证。
+本地构建使用 ad-hoc 代码签名。仓库变量 `MACOS_SIGNING_MODE` 设为 `adhoc` 时，GitHub Releases 也可发布这种安装包；它们没有 Apple Developer ID 签名和公证，首次打开可能被 macOS 拦截。确认下载来源可信后，可在**系统设置 → 隐私与安全性 → 仍要打开**中允许运行，无需关闭系统全局安全检查。macOS 和 Linux 自动更新通过独立的更新签名验证。默认的 `signed` 发布模式仍要求 Developer ID 签名和 Apple 公证。
 
 ### Linux App：Ubuntu 24.04 x64 软件包
 

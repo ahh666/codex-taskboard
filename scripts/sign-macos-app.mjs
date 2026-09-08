@@ -8,13 +8,16 @@ import path from "node:path";
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
-const identity = process.env.APPLE_SIGNING_IDENTITY?.trim();
+const adHoc = process.argv[3] === "--ad-hoc";
+const identity = adHoc ? "-" : process.env.APPLE_SIGNING_IDENTITY?.trim();
 const releasePolicy = JSON.parse(readFileSync(
   path.join(projectRoot, "src-tauri", "release.json"),
   "utf8",
 ));
 
-if (!appPath) throw new Error("Usage: sign-macos-app.mjs <App.app>");
+if (!appPath || process.argv.length > 4 || (process.argv[3] && !adHoc)) {
+  throw new Error("Usage: sign-macos-app.mjs <App.app> [--ad-hoc]");
+}
 if (!identity) throw new Error("APPLE_SIGNING_IDENTITY is required");
 
 const nodePath = path.join(appPath, "Contents", "MacOS", "node");
@@ -62,7 +65,7 @@ for (const entitlement of [
 run("/usr/bin/xattr", ["-crs", appPath]);
 run("/usr/bin/codesign", [
   "--force",
-  "--timestamp",
+  ...(adHoc ? [] : ["--timestamp"]),
   "--options",
   "runtime",
   "--entitlements",
@@ -73,7 +76,7 @@ run("/usr/bin/codesign", [
 ]);
 run("/usr/bin/codesign", [
   "--force",
-  "--timestamp",
+  ...(adHoc ? [] : ["--timestamp"]),
   "--options",
   "runtime",
   "--entitlements",
@@ -91,8 +94,9 @@ if (!signingDetails(nodePath).includes(`TeamIdentifier=${releasePolicy.nodeTeamI
   throw new Error("Signing the App replaced the Node.js Foundation signature");
 }
 for (const targetPath of [launcherPath, appPath]) {
-  if (!signingDetails(targetPath).includes(`TeamIdentifier=${releasePolicy.appleTeamId}`)) {
-    throw new Error(`Signed target does not use Apple Team ${releasePolicy.appleTeamId}`);
+  const expectedSignature = adHoc ? "Signature=adhoc" : `TeamIdentifier=${releasePolicy.appleTeamId}`;
+  if (!signingDetails(targetPath).includes(expectedSignature)) {
+    throw new Error(`Signed target does not have ${expectedSignature}`);
   }
 }
 const signedNodeEntitlements = entitlements(nodePath);
@@ -110,4 +114,4 @@ run(nodePath, [
   "let total=0; const add=(value)=>value+1; for(let i=0;i<5000000;i+=1) total=add(total); if(total!==5000000) process.exit(1)",
 ]);
 
-console.log(`Signed and verified ${appPath}`);
+console.log(`Signed and verified ${appPath}${adHoc ? " (ad-hoc)" : ""}`);
