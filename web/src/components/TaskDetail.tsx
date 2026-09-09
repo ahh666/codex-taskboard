@@ -1888,7 +1888,7 @@ export function TaskDetail({
                   <span className="detail-copy-action-icon" aria-hidden="true">
                     <LinearIcon name="openExternal" />
                   </span>
-                  <span className="detail-copy-action-label">{text("打开 Jira", "Open Jira")}</span>
+                  <span className="detail-copy-action-label">{text("打开需求链接", "Open requirement link")}</span>
                 </a>
               )}
               <button
