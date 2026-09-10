@@ -61,14 +61,13 @@ test("issue detail safely hides Markdown comments and renders Mermaid diagrams l
   assert.doesNotMatch(markdownSource, /rehypeRaw/);
 });
 
-test("comment posting keeps the created comment visible when an attachment upload fails", () => {
-  assert.match(detailSource, /Promise\.allSettled/);
-  assert.match(detailSource, /setComments\(\(current\) => \[\.\.\.current, nextComment\]\)/);
-  assert.match(detailSource, /附件上传失败/);
+test("comment attachment retries reuse the created comment and completed uploads", () => {
+  assert.match(detailSource, /const pendingCommentRef = useRef/);
+  assert.match(detailSource, /if \(!pendingCommentRef\.current\)[\s\S]*createComment\(task\.id, initialCommentBody\)/);
+  assert.match(detailSource, /if \(uploadedAttachments\.has\(item\.id\)\) continue/);
+  assert.match(detailSource, /pendingCommentRef\.current = null/);
+  assert.match(detailSource, /current\.some\(\(item\) => item\.id === nextComment\.id\)/);
   assert.match(detailSource, /removePendingInlineTokens/);
-  assert.match(detailSource, /const initialCommentBody = removePendingInlineTokens\([\s\S]*createComment\(task\.id, initialCommentBody\)/);
-  assert.match(detailSource, /commentUpdateFailed = true;[\s\S]*nextComment = comment;/);
-  assert.match(detailSource, /nextComment: Comment =/);
 });
 
 test("description attachment batches roll back successful uploads when another upload fails", () => {
