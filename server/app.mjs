@@ -1904,12 +1904,16 @@ export function createTaskboardServer(options = {}) {
     configStore: cloudConfig,
     fetch: options.remoteFetch ?? globalThis.fetch,
     resolveThreadBinding: currentHostThreadBinding,
-    resolveDevelopmentContext: async (projectId, context) => {
+    resolveDevelopmentContext: async (projectId, context, scans) => {
       if (!context.branch) return null;
       const config = await cloudConfig.read();
       const workspacePath = config.projectMappings[projectId];
       if (!workspacePath) return null;
-      const result = await scanDevelopmentContexts(workspacePath, codexProcessEnvironment);
+      const key = `${projectId}\0${workspacePath}`;
+      if (!scans.has(key)) {
+        scans.set(key, scanDevelopmentContexts(workspacePath, codexProcessEnvironment));
+      }
+      const result = await scans.get(key);
       return result.contexts.find((candidate) => (
         candidate.type === "worktree" && candidate.branch === context.branch
       )) ?? null;
@@ -3409,12 +3413,13 @@ export function createTaskboardServer(options = {}) {
             threadBinding,
             assigneeTarget,
           } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
-          const current = database.getTask(id);
-          if (!current) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          const source = database.getTaskSource(id);
+          if (!source) throw new ApiError(404, "TASK_NOT_FOUND", `Task '${id}' does not exist`);
+          let current = null;
           let jiraChanged = false;
           let feishuChanged = false;
           if (
-            current.source === "local"
+            source === "local"
             && [JIRA_PROJECT_ID, FEISHU_PROJECT_ID].includes(changes.projectId)
           ) {
             throw new ApiError(
@@ -3423,7 +3428,8 @@ export function createTaskboardServer(options = {}) {
               "本地任务不能移入外部同步项目",
             );
           }
-          if (current.source === "jira") {
+          if (source === "jira") {
+            current = database.getTask(id);
             if (current.version !== version) {
               throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
                 expectedVersion: version,
@@ -3448,7 +3454,8 @@ export function createTaskboardServer(options = {}) {
             }
             jiraChanged = await jira.updateTask(current, changes);
           }
-          if (current.source === "feishu") {
+          if (source === "feishu") {
+            current = database.getTask(id);
             if (current.version !== version) {
               throw new ApiError(409, "VERSION_CONFLICT", "Task changed since it was last read", {
                 expectedVersion: version,
