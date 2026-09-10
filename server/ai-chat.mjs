@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveCodexPermissions } from "../shared/codex-permissions.mjs";
 import { signalProcessTree } from "../shared/process-tree.mjs";
 import { ApiError } from "./database.mjs";
 import {
@@ -55,16 +56,14 @@ function wait(milliseconds) {
 }
 
 function appServerThreadSettings(thread, resolved) {
-  const dangerous = thread.sandbox === "danger-full-access";
+  const permission = resolveCodexPermissions(thread.sandbox);
   return {
     model: thread.model,
     cwd: resolved.workspacePath,
     runtimeWorkspaceRoots: [resolved.workspacePath, ...resolved.addDirectories],
-    approvalPolicy: dangerous ? "never" : "on-request",
-    ...(dangerous
-      ? {}
-      : { approvalsReviewer: thread.sandbox === "read-only" ? "user" : "auto_review" }),
-    sandbox: thread.sandbox,
+    approvalPolicy: permission.approvalPolicy,
+    ...(permission.reviewer ? { approvalsReviewer: permission.reviewer } : {}),
+    sandbox: permission.sandbox,
   };
 }
 
