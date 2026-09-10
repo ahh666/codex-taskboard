@@ -74,20 +74,23 @@ jobs:
       - name: Stage Ubuntu 24.04 x64 release assets
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_METADATA="$(node scripts/release-metadata-cli.mjs "$PACKAGE_VERSION" "$GITHUB_REF_NAME")"
+          LINUX_DEB_NAME="$(jq -r '.assets.linuxDeb' <<< "$RELEASE_METADATA")"
+          LINUX_APPIMAGE_NAME="$(jq -r '.assets.linuxAppImage' <<< "$RELEASE_METADATA")"
           LINUX_RELEASE="$RUNNER_TEMP/linux-release"
           mkdir -p "$LINUX_RELEASE"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
+            "$LINUX_RELEASE/$LINUX_DEB_NAME"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb.sig \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
+            "$LINUX_RELEASE/$LINUX_DEB_NAME.sig"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+            "$LINUX_RELEASE/$LINUX_APPIMAGE_NAME"
           cp \
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig \
-            "$LINUX_RELEASE/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
+            "$LINUX_RELEASE/$LINUX_APPIMAGE_NAME.sig"
 
       - name: Preserve Ubuntu 24.04 x64 release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -197,6 +200,7 @@ jobs:
             echo "发布标签必须与应用版本一致。" >&2
             exit 1
           fi
+          RELEASE_METADATA="$(node scripts/release-metadata-cli.mjs "$PACKAGE_VERSION" "$RELEASE_TAG")"
 
           RELEASE_CHECK="$RUNNER_TEMP/release-check.json"
           if ! RELEASE_STATUS="$(curl --silent --show-error \
@@ -243,6 +247,8 @@ jobs:
           NODE
           echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
           echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_METADATA=$RELEASE_METADATA" >> "$GITHUB_ENV"
+          echo "APP_NAME=$(jq -r '.appName' <<< "$RELEASE_METADATA")" >> "$GITHUB_ENV"
 
       - name: Set up Rust 1.88
         uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
@@ -305,7 +311,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          SIGNING_ARGS=("src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app")
+          SIGNING_ARGS=("src-tauri/target/universal-apple-darwin/release/bundle/macos/$APP_NAME")
           if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
             SIGNING_ARGS+=(--ad-hoc)
           fi
@@ -317,7 +323,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
-          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/$APP_NAME"
           APP_ZIP="$RUNNER_TEMP/Codex.Taskboard.app.zip"
           /usr/bin/ditto -c -k --keepParent --sequesterRsrc "$APP_PATH" "$APP_ZIP"
           xcrun notarytool submit "$APP_ZIP" \
@@ -337,9 +343,8 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
-          APP_NAME="Codex Taskboard.app"
-          RAW_DMG_NAME="Codex Taskboard_${PACKAGE_VERSION}_universal.dmg"
-          RELEASE_DMG_NAME="Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          RAW_DMG_NAME="$(jq -r '.rawDmgName' <<< "$RELEASE_METADATA")"
+          RELEASE_DMG_NAME="$(jq -r '.buildDmgName' <<< "$RELEASE_METADATA")"
           rm -f "$BUNDLE_ROOT/dmg/$RAW_DMG_NAME" "$BUNDLE_ROOT/macos/$RAW_DMG_NAME"
           (
             cd "$BUNDLE_ROOT/macos"
@@ -378,7 +383,7 @@ jobs:
         run: |
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           node scripts/create-macos-updater.mjs \
-            "$BUNDLE_ROOT/macos/Codex Taskboard.app" \
+            "$BUNDLE_ROOT/macos/$APP_NAME" \
             "$BUNDLE_ROOT/release" \
             "$RELEASE_TAG"
 
@@ -386,8 +391,8 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
-          APP_PATH="$BUNDLE_ROOT/macos/Codex Taskboard.app"
-          DMG_PATH="$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg"
+          APP_PATH="$BUNDLE_ROOT/macos/$APP_NAME"
+          DMG_PATH="$BUNDLE_ROOT/dmg/$(jq -r '.buildDmgName' <<< "$RELEASE_METADATA")"
           RELEASE_ROOT="$BUNDLE_ROOT/release"
           VERIFY_ARGS=("$APP_PATH" "$DMG_PATH" "$RELEASE_ROOT" "$RELEASE_TAG")
           if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
@@ -411,8 +416,8 @@ jobs:
         run: |
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           LATEST_PATH="$BUNDLE_ROOT/release/latest.json"
-          LINUX_DEB_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
-          LINUX_APPIMAGE_NAME="Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
+          LINUX_DEB_NAME="$(jq -r '.assets.linuxDeb' <<< "$RELEASE_METADATA")"
+          LINUX_APPIMAGE_NAME="$(jq -r '.assets.linuxAppImage' <<< "$RELEASE_METADATA")"
           LINUX_DEB="$RUNNER_TEMP/linux-release/$LINUX_DEB_NAME"
           LINUX_APPIMAGE="$RUNNER_TEMP/linux-release/$LINUX_APPIMAGE_NAME"
           jq \
@@ -436,40 +441,41 @@ jobs:
           BUNDLE_ROOT="src-tauri/target/universal-apple-darwin/release/bundle"
           RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
           MANIFEST_ROOT="$RUNNER_TEMP/release-manifest"
+          BUILD_DMG_NAME="$(jq -r '.buildDmgName' <<< "$RELEASE_METADATA")"
+          PUBLIC_DMG_NAME="$(jq -r '.assets.dmg' <<< "$RELEASE_METADATA")"
+          UPDATER_NAME="$(jq -r '.assets.macosUpdater' <<< "$RELEASE_METADATA")"
+          WINDOWS_INSTALLER_NAME="$(jq -r '.assets.windowsInstaller' <<< "$RELEASE_METADATA")"
+          LINUX_DEB_NAME="$(jq -r '.assets.linuxDeb' <<< "$RELEASE_METADATA")"
+          LINUX_APPIMAGE_NAME="$(jq -r '.assets.linuxAppImage' <<< "$RELEASE_METADATA")"
+          ASSET_NAMES=()
+          while IFS= read -r ASSET_NAME; do
+            ASSET_NAMES+=("$ASSET_NAME")
+          done < <(jq -r '.assetNames[]' <<< "$RELEASE_METADATA")
           mkdir -p "$RELEASE_ASSETS" "$MANIFEST_ROOT"
           cp \
-            "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
-          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
-          cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
+            "$BUNDLE_ROOT/dmg/$BUILD_DMG_NAME" \
+            "$RELEASE_ASSETS/$PUBLIC_DMG_NAME"
+          cp "$BUNDLE_ROOT/release/$UPDATER_NAME" "$RELEASE_ASSETS/"
+          cp "$BUNDLE_ROOT/release/$UPDATER_NAME.sig" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/latest.json" "$RELEASE_ASSETS/"
           cp \
             "$RUNNER_TEMP/windows-preview/Codex Taskboard_${PACKAGE_VERSION}_x64-setup.exe" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
+            "$RELEASE_ASSETS/$WINDOWS_INSTALLER_NAME"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
+            "$RUNNER_TEMP/linux-release/$LINUX_DEB_NAME" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
+            "$RUNNER_TEMP/linux-release/$LINUX_DEB_NAME.sig" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$RUNNER_TEMP/linux-release/$LINUX_APPIMAGE_NAME" \
             "$RELEASE_ASSETS/"
           cp \
-            "$RUNNER_TEMP/linux-release/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
+            "$RUNNER_TEMP/linux-release/$LINUX_APPIMAGE_NAME.sig" \
             "$RELEASE_ASSETS/"
           (
             cd "$RELEASE_ASSETS"
-            shasum -a 256 \
-              "Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
-              "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
-              "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
+            shasum -a 256 "${ASSET_NAMES[@]}" > "$MANIFEST_ROOT/release-assets.sha256"
           )
 
       - name: Preserve trusted release asset manifest
@@ -486,6 +492,10 @@ jobs:
         run: |
           RELEASE_ASSETS="$RUNNER_TEMP/release-assets"
           RELEASE_NOTES="$RUNNER_TEMP/release-notes.md"
+          ASSET_PATHS=()
+          while read -r SHA256 ASSET_NAME; do
+            ASSET_PATHS+=("$RELEASE_ASSETS/$ASSET_NAME")
+          done < "$RUNNER_TEMP/release-manifest/release-assets.sha256"
           cat > "$RELEASE_NOTES" <<'NOTES'
           - 提供 macOS 通用 DMG，支持 Apple Silicon 和 Intel Mac。
           - 提供 Ubuntu 24.04 x64 的 DEB 和 AppImage 安装包。
@@ -505,31 +515,10 @@ jobs:
             --draft \
             --title "Codex Taskboard $RELEASE_TAG" \
             --notes-file "$RELEASE_NOTES" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+            "${ASSET_PATHS[0]}"
           gh release upload "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb.sig"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage.sig"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_NSIS-x64-unsigned.exe"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig"
-          gh release upload "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            "$RELEASE_ASSETS/latest.json"
+            "${ASSET_PATHS[@]:1}"
 
       - name: Remove temporary signing files
         if: always()
@@ -649,6 +638,12 @@ jobs:
           set -euo pipefail
           API_VERSION_HEADER="X-GitHub-Api-Version: 2026-03-10"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_METADATA="$(node scripts/release-metadata-cli.mjs "$PACKAGE_VERSION" "$RELEASE_TAG")"
+          PUBLIC_DMG_NAME="$(jq -r '.assets.dmg' <<< "$RELEASE_METADATA")"
+          UPDATER_NAME="$(jq -r '.assets.macosUpdater' <<< "$RELEASE_METADATA")"
+          LINUX_DEB_NAME="$(jq -r '.assets.linuxDeb' <<< "$RELEASE_METADATA")"
+          LINUX_APPIMAGE_NAME="$(jq -r '.assets.linuxAppImage' <<< "$RELEASE_METADATA")"
+          APP_NAME="$(jq -r '.appName' <<< "$RELEASE_METADATA")"
           MANIFEST_PATH="$RUNNER_TEMP/trusted-release-manifest/release-assets.sha256"
           DRAFT_ASSETS="$RUNNER_TEMP/draft-release-assets"
           EXPECTED_ASSETS="$RUNNER_TEMP/expected-release-assets.txt"
@@ -694,19 +689,19 @@ jobs:
           UPDATER_ROOT="$RUNNER_TEMP/remote-updater"
           mkdir -p "$UPDATER_ROOT"
           tar -xzf \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
+            "$DRAFT_ASSETS/$UPDATER_NAME" \
             -C "$UPDATER_ROOT"
           MACOS_RELEASE_ROOT="$RUNNER_TEMP/remote-macos-release"
           mkdir -p "$MACOS_RELEASE_ROOT"
           cp \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+            "$DRAFT_ASSETS/$UPDATER_NAME" \
+            "$DRAFT_ASSETS/$UPDATER_NAME.sig" \
             "$MACOS_RELEASE_ROOT/"
           jq 'del(.platforms["linux-x86_64-deb"], .platforms["linux-x86_64-appimage"])' \
             "$DRAFT_ASSETS/latest.json" > "$MACOS_RELEASE_ROOT/latest.json"
           VERIFY_ARGS=(
-            "$UPDATER_ROOT/Codex Taskboard.app"
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_macOS-universal.dmg"
+            "$UPDATER_ROOT/$APP_NAME"
+            "$DRAFT_ASSETS/$PUBLIC_DMG_NAME"
             "$MACOS_RELEASE_ROOT"
             "$RELEASE_TAG"
           )
@@ -715,8 +710,8 @@ jobs:
           fi
           npm run app:verify-release -- "${VERIFY_ARGS[@]}"
           node scripts/verify-linux-updater.mjs \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.deb" \
-            "$DRAFT_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_Ubuntu-24.04-x64.AppImage" \
+            "$DRAFT_ASSETS/$LINUX_DEB_NAME" \
+            "$DRAFT_ASSETS/$LINUX_APPIMAGE_NAME" \
             "$DRAFT_ASSETS/latest.json" \
             "$RELEASE_TAG"
 
