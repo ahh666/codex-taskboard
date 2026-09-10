@@ -22,6 +22,7 @@ import {
   getAiChatCatalog,
   getAiChatComposerCandidates,
   getAiChatThread,
+  getAiChatThreadSummary,
   interruptAiChatRun,
   compactAiChatThread,
   listAiChatThreads,
@@ -1609,7 +1610,7 @@ export function AiChat({
     if (!available || backgroundRunningThreadIds.length === 0) return;
     const refresh = async (threadId: string) => {
       try {
-        const next = await getAiChatThread(threadId);
+        const next = await getAiChatThreadSummary(threadId);
         replaceThread(next.thread);
         observeRunTransitions(threadId, next.runs);
       } catch {
