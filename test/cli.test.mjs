@@ -400,7 +400,7 @@ test("issue move fetches the current version when --if-version is omitted", asyn
 
 test("issue move separates controller attribution from the task thread binding", async () => {
   let requestBody;
-  const windowsWorkspacePath = String.raw`C:\Users\admin\Documents\dashi-taskboard`;
+  const windowsWorkspacePath = String.raw`C:\Users\admin\Documents\codex-taskboard`;
   const result = await run([
     "issue", "move", "TASK-1", "--status", "blocked", "--if-version", "3",
     "--binding-thread-id", "remote-thread",

@@ -120,12 +120,12 @@ test("the automation host request accepts catalog-provided project automation op
   assert.match(buildTaskboardAutomationPrompt(routedRequest), /全局收件箱控制器/);
   const windowsRemoteRequest = {
     ...remoteRequest,
-    workspacePath: String.raw`C:\Users\admin\Documents\dashi-taskboard`,
+    workspacePath: String.raw`C:\Users\admin\Documents\codex-taskboard`,
     remoteProjects: [{
       codexProjectId: "remote-project-123",
       codexProjectKind: "remote",
       codexHostId: "remote-ssh-discovered:merlin-agent",
-      workspacePath: String.raw`C:\Users\admin\Documents\dashi-taskboard`,
+      workspacePath: String.raw`C:\Users\admin\Documents\codex-taskboard`,
     }],
   };
   assert.deepEqual(
