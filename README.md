@@ -38,6 +38,8 @@ Choose “Connect Feishu requirements” from the project menu. Taskboard starts
 
 Saving the view reads requirements visible to the authorized user, including title, description, status, priority, people, and Feishu Project detail URL, and projects each work item into the “Feishu requirements” project. Requirement content remains managed in Feishu Project.
 
+Meegle uses the `taskboard` profile in the current system user's home directory to separate its configuration and stores credentials in the OS credential store. Users who previously signed in under `meegle-home` in the Taskboard data directory need to authorize Feishu again; existing project view bindings are retained.
+
 ## Use the CLI
 
 Run it from the project:
