@@ -479,6 +479,10 @@ export function TaskDetail({
   const taskAttachmentInputRef = useRef<HTMLInputElement>(null);
   const commentAttachmentInputRef = useRef<HTMLInputElement>(null);
   const editCommentAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const pendingCommentRef = useRef<{
+    comment: Comment;
+    uploadedAttachments: Map<string, Attachment>;
+  } | null>(null);
   const editingUploadedAttachmentsRef = useRef<Map<string, Attachment>>(new Map());
   const draft = serializeInlineMedia(commentSegments);
   const commentInlineImages = inlineMediaImages(commentSegments);
@@ -886,59 +890,38 @@ export function TaskDetail({
     setCommentsError(null);
     try {
       const initialCommentBody = removePendingInlineTokens(body, commentInlineImages, commentInlineFiles);
-      const comment = await createComment(task.id, initialCommentBody);
-      const [inlineResults, fileResults] = await Promise.all([
-        Promise.allSettled(
-          commentInlineImages.map((image) => uploadCommentAttachment(comment.id, image.file, "inline")),
-        ),
-        Promise.allSettled(
-          commentInlineFiles.map((file) => uploadCommentAttachment(comment.id, file.file, "attachment")),
-        ),
-      ]);
-      const inlineAttachments = inlineResults.flatMap((result) => (
-        result.status === "fulfilled" ? [result.value] : []
-      ));
-      const fileAttachments = fileResults.flatMap((result) => (
-        result.status === "fulfilled" ? [result.value] : []
-      ));
-      const failedUploads = [...inlineResults, ...fileResults].filter(
-        (result) => result.status === "rejected",
-      ).length;
-      const resolvedBody = fileResults.reduce((value, result, index) => (
-        result.status === "fulfilled"
-          ? resolveInlineAttachmentMarkdown(value, [commentInlineFiles[index]], [result.value])
-          : value
-      ), inlineResults.reduce((value, result, index) => (
-        result.status === "fulfilled"
-          ? resolveInlineMediaMarkdown(value, [commentInlineImages[index]], [result.value])
-          : value
-      ), body));
+      if (!pendingCommentRef.current) {
+        pendingCommentRef.current = {
+          comment: await createComment(task.id, initialCommentBody),
+          uploadedAttachments: new Map(),
+        };
+      }
+      const { comment, uploadedAttachments } = pendingCommentRef.current;
+      const pending = [...commentInlineImages, ...commentInlineFiles];
+      for (const item of pending) {
+        if (uploadedAttachments.has(item.id)) continue;
+        const attachment = await uploadCommentAttachment(
+          comment.id,
+          item.file,
+          item.type === "pending-image" ? "inline" : "attachment",
+        );
+        uploadedAttachments.set(item.id, attachment);
+      }
+      const inlineAttachments = commentInlineImages.map((item) => uploadedAttachments.get(item.id)!);
+      const fileAttachments = commentInlineFiles.map((item) => uploadedAttachments.get(item.id)!);
+      const resolvedBody = resolveInlineAttachmentMarkdown(
+        resolveInlineMediaMarkdown(body, commentInlineImages, inlineAttachments),
+        commentInlineFiles,
+        fileAttachments,
+      );
       const cleanedBody = removePendingInlineTokens(resolvedBody, commentInlineImages, commentInlineFiles);
-      let nextComment: Comment = {
-        ...comment,
-        body: comment.body,
-        attachments: [...comment.attachments, ...inlineAttachments, ...fileAttachments],
-      };
-      let commentUpdateFailed = false;
-      if (cleanedBody !== comment.body) {
-        try {
-          nextComment = await updateComment(comment, cleanedBody);
-        } catch (error) {
-          commentUpdateFailed = true;
-          await Promise.allSettled(
-            [...inlineAttachments, ...fileAttachments].map((attachment) => deleteAttachment(attachment)),
-          );
-          nextComment = comment;
-          setCommentsError(messageFor(error));
-        }
-      }
-      if (failedUploads > 0 && !commentUpdateFailed) {
-        setCommentsError([
-          `评论已发布，但有 ${failedUploads} 个附件上传失败。`,
-          `The comment was posted, but ${failedUploads} attachment upload${failedUploads === 1 ? "" : "s"} failed.`,
-        ]);
-      }
-      setComments((current) => [...current, nextComment]);
+      const nextComment = cleanedBody !== comment.body
+        ? await updateComment(comment, cleanedBody)
+        : comment;
+      pendingCommentRef.current = null;
+      setComments((current) => current.some((item) => item.id === nextComment.id)
+        ? current.map((item) => item.id === nextComment.id ? nextComment : item)
+        : [...current, nextComment]);
       setCommentSegments(createInlineMediaSegments());
       if (commentAttachmentInputRef.current) commentAttachmentInputRef.current.value = "";
       let relationAnchor = await getTask(currentTask.id);
@@ -1791,6 +1774,7 @@ export function TaskDetail({
                 <InlineMediaComposer
                   ref={composerRef}
                   className="comment-inline-media"
+                  disabled={submitting}
                   segments={commentSegments}
                   mentionTasks={tasks}
                   referenceTasks={referenceTasks}
