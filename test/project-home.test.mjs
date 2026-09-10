@@ -123,7 +123,10 @@ test("the app omits the old navigation and keeps the embedded draggable header r
 });
 
 test("realtime updates remain active on the project home and reconcile after reconnecting", () => {
-  assert.match(appSource, /useEffect\(\(\) => \{\s*const source = new EventSource\(resolveTaskboardUrl\("\/api\/events"\)\)/);
-  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: affectsSelectedProject \}\)/);
+  assert.match(appSource, /const selectionRef = useRef\(\{ selectedProjectId, detailTaskId \}\)/);
+  assert.match(appSource, /useLayoutEffect\(\(\) => \{\s*selectionRef\.current = \{ selectedProjectId, detailTaskId \}/);
+  assert.match(appSource, /const eventsUrl = resolveTaskboardUrl\("\/api\/events"\);[\s\S]*?new EventSource\(eventsUrl\)/);
+  assert.match(appSource, /event\.type\.startsWith\("task\."\)[\s\S]*?projects: event\.type !== "task\.relation\.updated"/);
+  assert.match(appSource, /pendingTaskProjects\.has\(selectedProjectId\)/);
   assert.match(appSource, /source\.onopen = \(\) => \{[\s\S]*?scheduleRefresh\(\{ projects: true, tasks: Boolean\(selectedProjectId\) \}\)/);
 });
