@@ -496,18 +496,8 @@ jobs:
           while read -r SHA256 ASSET_NAME; do
             ASSET_PATHS+=("$RELEASE_ASSETS/$ASSET_NAME")
           done < "$RUNNER_TEMP/release-manifest/release-assets.sha256"
-          cat > "$RELEASE_NOTES" <<'NOTES'
-          - 提供 macOS 通用 DMG，支持 Apple Silicon 和 Intel Mac。
-          - 提供 Ubuntu 24.04 x64 的 DEB 和 AppImage 安装包。
-          - 提供 Windows x64 安装包 Preview；当前未签名，不支持自动更新。
-          - macOS 和 Linux 内置自动更新，更新包使用独立签名进行验证。
-          NOTES
-          if [[ "$MACOS_SIGNING_MODE" == "adhoc" ]]; then
-            cat >> "$RELEASE_NOTES" <<'NOTES'
-
-          macOS 安装说明：本版本使用 ad-hoc 代码签名，未经 Apple Developer ID 签名和公证。从 DMG 将 App 拖入“应用程序”后首次打开可能被 macOS 拦截；确认下载来源可信后，可在“系统设置 → 隐私与安全性”中选择“仍要打开”。无需关闭系统全局安全检查。
-          NOTES
-          fi
+          git tag --list --format='%(contents)' "$RELEASE_TAG" > "$RELEASE_NOTES"
+          test -s "$RELEASE_NOTES"
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
