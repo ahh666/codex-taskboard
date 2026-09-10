@@ -14,12 +14,12 @@ and local builds are not signed.
 ## Team roles
 
 - Authors and committers: [@jadon7](https://github.com/jadon7) and
-  [@chuspeeism](https://github.com/chuspeeism).
+  [@ahh666](https://github.com/ahh666).
 - Reviewers: [@jadon7](https://github.com/jadon7) and
-  [@chuspeeism](https://github.com/chuspeeism). Changes from other
+  [@ahh666](https://github.com/ahh666). Changes from other
   contributors are reviewed through pull requests before merge.
 - Approver: repository owner
-  [@chuspeeism](https://github.com/chuspeeism). Every signing request requires
+  [@ahh666](https://github.com/ahh666). Every signing request requires
   manual approval.
 
 ## Build and approval
