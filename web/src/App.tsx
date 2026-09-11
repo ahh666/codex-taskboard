@@ -3705,7 +3705,6 @@ export function App() {
                 title={launcherUpdate.message || text("更新 Codex Taskboard", "Update Codex Taskboard")}
                 onClick={() => void openLauncherUpdate()}
               >
-                <RefreshIcon color="currentColor" size={13} />
                 <span>{text("更新 Taskboard", "Update Taskboard")}</span>
               </button>
             )}

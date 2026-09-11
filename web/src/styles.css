@@ -8647,16 +8647,6 @@ kbd {
     max-width: 35vw;
   }
 
-  .launcher-update-button {
-    justify-content: center;
-    width: 28px;
-    padding: 0;
-  }
-
-  .launcher-update-button span {
-    display: none;
-  }
-
   .board-toolbar {
     padding: 0 8px;
   }
@@ -8868,7 +8858,6 @@ kbd {
   align-items: center;
   flex: 0 0 auto;
   height: 29px;
-  gap: 5px;
   padding: 0 11px;
   border: var(--border-hairline) solid rgb(70, 123, 247);
   border-radius: 14px;
@@ -8890,11 +8879,6 @@ kbd {
 .launcher-update-button:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 2px rgba(70, 123, 247, 0.28);
-}
-
-.launcher-update-button svg {
-  width: 13px;
-  height: 13px;
 }
 
 .project-automation-trigger {
