@@ -8647,6 +8647,16 @@ kbd {
     max-width: 35vw;
   }
 
+  .launcher-update-button {
+    justify-content: center;
+    width: 28px;
+    padding: 0;
+  }
+
+  .launcher-update-button span {
+    display: none;
+  }
+
   .board-toolbar {
     padding: 0 8px;
   }
@@ -8851,6 +8861,53 @@ kbd {
 
 .header-actions {
   gap: 8px;
+}
+
+.launcher-update-button {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 29px;
+  gap: 5px;
+  padding: 0 11px;
+  border: var(--border-hairline) solid rgba(0, 165, 88, 0.24);
+  border-radius: 14px;
+  background: rgba(0, 165, 88, 0.12);
+  color: #087847;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.025);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.launcher-update-button:hover:not(:disabled),
+.launcher-update-button:focus-visible {
+  border-color: rgba(0, 165, 88, 0.34);
+  background: rgba(0, 165, 88, 0.18);
+  color: #05683c;
+}
+
+.launcher-update-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(0, 165, 88, 0.2);
+}
+
+.launcher-update-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+:root[data-theme="dark"] .launcher-update-button {
+  border-color: rgba(83, 185, 138, 0.25);
+  background: rgba(83, 185, 138, 0.15);
+  color: #65d29a;
+}
+
+:root[data-theme="dark"] .launcher-update-button:hover:not(:disabled),
+:root[data-theme="dark"] .launcher-update-button:focus-visible {
+  border-color: rgba(83, 185, 138, 0.4);
+  background: rgba(83, 185, 138, 0.22);
+  color: #83dfac;
 }
 
 .project-automation-trigger {

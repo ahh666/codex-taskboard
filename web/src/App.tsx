@@ -29,6 +29,7 @@ import {
   getHostRuntime,
   getJiraConnection,
   getFeishuConnection,
+  getLauncherUpdateStatus,
   getTaskboardRevision,
   getTaskboardMetadata,
   listArchivedTasks,
@@ -38,6 +39,7 @@ import {
   listTasks,
   moveTask as moveTaskRequest,
   publishHostRuntime,
+  requestLauncherUpdate,
   removeTaskRelation,
   resolveTaskboardUrl,
   resolveTaskboardWebSocketUrl,
@@ -50,6 +52,7 @@ import {
   syncFeishuConnection,
   uploadAttachment,
   updateTask as updateTaskRequest,
+  type LauncherUpdateStatus,
 } from "./api";
 import {
   actorKey,
@@ -747,6 +750,8 @@ export function App() {
   const [developmentScanLoading, setDevelopmentScanLoading] = useState(false);
   const [manageTaskboardSkillPath, setManageTaskboardSkillPath] = useState("");
   const [taskboardMetadata, setTaskboardMetadata] = useState<TaskboardMetadata | null>(null);
+  const [launcherUpdate, setLauncherUpdate] = useState<LauncherUpdateStatus | null>(null);
+  const [launcherUpdateRequesting, setLauncherUpdateRequesting] = useState(false);
   const [localAiChatAvailable, setLocalAiChatAvailable] = useState(false);
   const [aiImportReadyProjectId, setAiImportReadyProjectId] = useState<string | null>(null);
   const [aiThreads, setAiThreads] = useState<AiChatThread[]>([]);
@@ -906,6 +911,41 @@ export function App() {
     setUndoNotice(null);
     setAnnouncementValue(message);
   }, []);
+
+  useEffect(() => {
+    if (taskboardMetadata?.capabilities?.launcherUpdate !== true) {
+      setLauncherUpdate(null);
+      return;
+    }
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const update = await getLauncherUpdateStatus();
+        if (!stopped) setLauncherUpdate(update);
+      } catch {}
+      if (!stopped) timer = window.setTimeout(poll, 5_000);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [taskboardMetadata?.capabilities?.launcherUpdate]);
+
+  async function openLauncherUpdate() {
+    if (launcherUpdateRequesting) return;
+    setLauncherUpdateRequesting(true);
+    setActionError(null);
+    try {
+      await requestLauncherUpdate();
+      setAnnouncement(text("已打开更新安装提示。", "Update prompt opened."));
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setLauncherUpdateRequesting(false);
+    }
+  }
 
   const markDashboardSummaryAnimationStarted = useCallback((projectId: string) => {
     setDashboardSummaryAnimatedProjectId(projectId);
@@ -3656,6 +3696,19 @@ export function App() {
           <div ref={dragRegionRef} className="workspace-drag-region" aria-hidden="true" />
 
           <div className="header-actions">
+            {launcherUpdate?.available && (
+              <button
+                className="launcher-update-button"
+                type="button"
+                disabled={launcherUpdateRequesting}
+                aria-label={text("更新 Codex Taskboard", "Update Codex Taskboard")}
+                title={launcherUpdate.message || text("更新 Codex Taskboard", "Update Codex Taskboard")}
+                onClick={() => void openLauncherUpdate()}
+              >
+                <RefreshIcon color="currentColor" size={13} />
+                <span>{text("更新", "Update")}</span>
+              </button>
+            )}
             {selectedProject && (
               <ProjectAutomationMenu
                 automation={selectedProjectAutomation}
