@@ -8870,11 +8870,11 @@ kbd {
   height: 29px;
   gap: 5px;
   padding: 0 11px;
-  border: var(--border-hairline) solid rgba(0, 165, 88, 0.24);
+  border: var(--border-hairline) solid rgb(70, 123, 247);
   border-radius: 14px;
-  background: rgba(0, 165, 88, 0.12);
-  color: #087847;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.025);
+  background: rgb(70, 123, 247);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(31, 65, 150, 0.18);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -8882,32 +8882,19 @@ kbd {
 
 .launcher-update-button:hover:not(:disabled),
 .launcher-update-button:focus-visible {
-  border-color: rgba(0, 165, 88, 0.34);
-  background: rgba(0, 165, 88, 0.18);
-  color: #05683c;
+  border-color: #3f70e4;
+  background: #3f70e4;
+  color: #fff;
 }
 
 .launcher-update-button:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 2px rgba(0, 165, 88, 0.2);
+  box-shadow: 0 0 0 2px rgba(70, 123, 247, 0.28);
 }
 
 .launcher-update-button svg {
   width: 13px;
   height: 13px;
-}
-
-:root[data-theme="dark"] .launcher-update-button {
-  border-color: rgba(83, 185, 138, 0.25);
-  background: rgba(83, 185, 138, 0.15);
-  color: #65d29a;
-}
-
-:root[data-theme="dark"] .launcher-update-button:hover:not(:disabled),
-:root[data-theme="dark"] .launcher-update-button:focus-visible {
-  border-color: rgba(83, 185, 138, 0.4);
-  background: rgba(83, 185, 138, 0.22);
-  color: #83dfac;
 }
 
 .project-automation-trigger {

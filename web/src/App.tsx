@@ -3706,7 +3706,7 @@ export function App() {
                 onClick={() => void openLauncherUpdate()}
               >
                 <RefreshIcon color="currentColor" size={13} />
-                <span>{text("更新", "Update")}</span>
+                <span>{text("更新 Taskboard", "Update Taskboard")}</span>
               </button>
             )}
             {selectedProject && (
