@@ -280,6 +280,21 @@ async function copyApplicationResources() {
       path.join(appResources, "node_modules", "smol-toml"),
       { recursive: true },
     ),
+    cp(
+      path.join(projectRoot, "node_modules", "qrcode"),
+      path.join(appResources, "node_modules", "qrcode"),
+      { recursive: true },
+    ),
+    cp(
+      path.join(projectRoot, "node_modules", "dijkstrajs"),
+      path.join(appResources, "node_modules", "dijkstrajs"),
+      { recursive: true },
+    ),
+    cp(
+      path.join(projectRoot, "node_modules", "pngjs"),
+      path.join(appResources, "node_modules", "pngjs"),
+      { recursive: true },
+    ),
     cp(path.join(projectRoot, "dist", "web"), path.join(appResources, "dist", "web"), {
       recursive: true,
     }),
