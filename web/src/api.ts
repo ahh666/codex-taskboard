@@ -59,6 +59,11 @@ interface ApiErrorBody {
   };
 }
 
+export interface LauncherUpdateStatus {
+  available: boolean;
+  message: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -279,6 +284,15 @@ export async function getProjectSummary(
 
 export async function getTaskboardMetadata(signal?: AbortSignal): Promise<TaskboardMetadata> {
   return request<TaskboardMetadata>("/api/meta", { signal });
+}
+
+export async function getLauncherUpdateStatus(signal?: AbortSignal): Promise<LauncherUpdateStatus> {
+  const data = await request<{ update: LauncherUpdateStatus }>("/api/local/launcher-update", { signal });
+  return data.update;
+}
+
+export async function requestLauncherUpdate(): Promise<void> {
+  await request<{ accepted: true }>("/api/local/launcher-update", { method: "POST" });
 }
 
 export async function getTaskboardRevision(

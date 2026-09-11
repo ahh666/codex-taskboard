@@ -145,12 +145,15 @@ enum LauncherEvent {
     OpenSignalQueued,
     OpenedInExistingCodex,
     Injected,
+    UpdateRequested,
 }
 
 struct LauncherState {
     child: Mutex<Option<u32>>,
     snapshot: Mutex<LauncherSnapshot>,
     status_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
+    check_update_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
+    quit_menu: Mutex<Option<MenuItem<tauri::Wry>>>,
     intentional_stop: AtomicBool,
     update_flow_in_progress: AtomicBool,
     update_in_progress: AtomicBool,
@@ -167,6 +170,7 @@ struct LauncherState {
     data_directory: PathBuf,
     log_path: PathBuf,
     pid_record_path: PathBuf,
+    launcher_status_path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -418,6 +422,8 @@ impl LauncherState {
                 open_request_pending: false,
             }),
             status_menu: Mutex::new(None),
+            check_update_menu: Mutex::new(None),
+            quit_menu: Mutex::new(None),
             intentional_stop: AtomicBool::new(false),
             update_flow_in_progress: AtomicBool::new(false),
             update_in_progress: AtomicBool::new(false),
@@ -432,6 +438,7 @@ impl LauncherState {
             child_control: Mutex::new(None),
             _instance_lock: instance_lock,
             pid_record_path: data_directory.join("launcher-child.json"),
+            launcher_status_path: data_directory.join("launcher-status.json"),
             data_directory,
             log_path: log_directory.join("codex-taskboard-launcher.log"),
         }
@@ -913,6 +920,12 @@ fn update_snapshot(
     let snapshot = {
         let mut snapshot = state.snapshot.lock().unwrap();
         update(&mut snapshot);
+        if let Ok(status) = serde_json::to_vec(&serde_json::json!({
+            "available": snapshot.update_available,
+            "message": snapshot.update_message,
+        })) {
+            let _ = fs::write(&state.launcher_status_path, status);
+        }
         snapshot.clone()
     };
     let status_menu = state.status_menu.lock().unwrap().clone();
@@ -1559,6 +1572,26 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
             let Ok(event) = serde_json::from_str::<LauncherEvent>(&line) else {
                 continue;
             };
+            if let LauncherEvent::UpdateRequested = &event {
+                let active = {
+                    let snapshot = state.snapshot.lock().unwrap();
+                    state.generation.load(Ordering::SeqCst) == generation
+                        && snapshot.child_pid == Some(pid)
+                };
+                if !active {
+                    continue;
+                }
+                let check_update = state.check_update_menu.lock().unwrap().clone();
+                let quit = state.quit_menu.lock().unwrap().clone();
+                if let (Some(check_update), Some(quit)) = (check_update, quit) {
+                    let update_app = app.clone();
+                    let update_state = Arc::clone(&state);
+                    tauri::async_runtime::spawn(async move {
+                        offer_update(&update_app, &update_state, &check_update, &quit, true).await;
+                    });
+                }
+                continue;
+            }
             update_snapshot(&app, &state, |snapshot| {
                 if state.generation.load(Ordering::SeqCst) != generation
                     || snapshot.child_pid != Some(pid)
@@ -1593,6 +1626,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                         snapshot.phase = "running".into();
                         snapshot.message = "任务面板已在 Codex 客户端中打开。".into();
                     }
+                    LauncherEvent::UpdateRequested => unreachable!(),
                 }
             });
         }
@@ -2479,6 +2513,8 @@ fn main() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            *state.check_update_menu.lock().unwrap() = Some(check_update.clone());
+            *state.quit_menu.lock().unwrap() = Some(quit.clone());
             #[cfg(target_os = "macos")]
             let tray_menu = Menu::with_items(
                 app,

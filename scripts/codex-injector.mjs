@@ -251,6 +251,10 @@ function startTaskboard({ detached, onCodexAppServerRequest }) {
     stdio: [...baseStdio, "ipc"],
   });
   child.on("message", (message) => {
+    if (message?.type === "taskboard:launcher-update-request") {
+      emitLauncherEvent("updateRequested");
+      return;
+    }
     if (message?.type !== "taskboard:codex-app-server-request") return;
     void Promise.resolve(onCodexAppServerRequest(message)).then(
       (result) => {

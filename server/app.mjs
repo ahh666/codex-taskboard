@@ -1778,6 +1778,7 @@ export function resolveServerOptions(options = {}) {
     )),
     jiraConfigPath: options.jiraConfigPath ?? path.join(dataDirectory, "jira-connection.json"),
     clientStoragePath: options.clientStoragePath ?? path.join(dataDirectory, "client-storage.json"),
+    launcherStatusPath: options.launcherStatusPath ?? path.join(dataDirectory, "launcher-status.json"),
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath
       ?? environment.CODEX_TASKBOARD_SKILL_PATH
@@ -1821,6 +1822,19 @@ export function createTaskboardServer(options = {}) {
   const database = new TaskboardDatabase(resolved.databasePath);
   const events = new EventHub();
   let clientStorageWrite = Promise.resolve();
+
+  async function readLauncherUpdate() {
+    try {
+      const snapshot = JSON.parse(await readFile(resolved.launcherStatusPath, "utf8"));
+      return {
+        available: snapshot?.available === true,
+        message: typeof snapshot?.message === "string" ? snapshot.message : "",
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") return { available: false, message: "" };
+      throw error;
+    }
+  }
 
   async function readClientStorage() {
     try {
@@ -2323,6 +2337,26 @@ export function createTaskboardServer(options = {}) {
         return methodNotAllowed(response, ["GET", "PATCH"]);
       }
 
+      if (pathname === "/api/local/launcher-update") {
+        if ([...url.searchParams.keys()].length > 0) {
+          throw new ApiError(400, "UNKNOWN_QUERY_PARAMETER", "Launcher update routes do not accept query parameters");
+        }
+        const update = await readLauncherUpdate();
+        if (request.method === "GET") return sendJson(response, 200, { update });
+        if (request.method === "POST") {
+          await assertEmptyRequestBody(request, "POST /api/local/launcher-update");
+          if (!update.available) {
+            throw new ApiError(409, "UPDATE_UNAVAILABLE", "No launcher update is available");
+          }
+          if (typeof options.requestLauncherUpdate !== "function") {
+            throw new ApiError(409, "LAUNCHER_UNAVAILABLE", "The Taskboard launcher is unavailable");
+          }
+          await options.requestLauncherUpdate();
+          return sendJson(response, 202, { accepted: true });
+        }
+        return methodNotAllowed(response, ["GET", "POST"]);
+      }
+
       if (pathname === "/api/local/codex-thread-progress") {
         if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
         if ([...url.searchParams.keys()].some((key) => key !== "threadId")) {
@@ -2585,6 +2619,9 @@ export function createTaskboardServer(options = {}) {
           capabilities: {
             localAiChat: !configuredTrustedRequest
               && isLoopbackAddress(request.socket.remoteAddress),
+            ...(typeof options.requestLauncherUpdate === "function"
+              ? { launcherUpdate: true }
+              : {}),
           },
           ...(capabilityCloudConfig?.remoteUrl
             ? {
