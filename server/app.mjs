@@ -2619,7 +2619,9 @@ export function createTaskboardServer(options = {}) {
           capabilities: {
             localAiChat: !configuredTrustedRequest
               && isLoopbackAddress(request.socket.remoteAddress),
-            launcherUpdate: typeof options.requestLauncherUpdate === "function",
+            ...(typeof options.requestLauncherUpdate === "function"
+              ? { launcherUpdate: true }
+              : {}),
           },
           ...(capabilityCloudConfig?.remoteUrl
             ? {
