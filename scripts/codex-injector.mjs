@@ -1306,6 +1306,50 @@ async function taskboardRequest(pathname, { method = "GET", body } = {}) {
   return payload;
 }
 
+async function proxyTaskboardHttp(request) {
+  const base = new URL(`${taskboardBaseUrl}/`);
+  const target = new URL(request.path.slice(1), base);
+  const apiPrefix = `${base.pathname}api/`;
+  if (
+    target.origin !== base.origin
+    || !target.pathname.startsWith(apiPrefix)
+    || target.username
+    || target.password
+    || target.hash
+  ) {
+    throw new Error("Invalid Taskboard API path");
+  }
+
+  const body = Object.hasOwn(request, "bodyBase64")
+    ? Buffer.from(request.bodyBase64, "base64")
+    : undefined;
+  if (body && body.length > 25 * 1024 * 1024) {
+    throw new Error("Taskboard API request body is too large");
+  }
+  const response = await fetch(target, {
+    method: request.method,
+    cache: "no-store",
+    redirect: "manual",
+    headers: request.headers,
+    ...(body === undefined ? {} : { body }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > 25 * 1024 * 1024) {
+    throw new Error("Taskboard API response body is too large");
+  }
+  const bodyText = await response.text();
+  if (Buffer.byteLength(bodyText) > 25 * 1024 * 1024) {
+    throw new Error("Taskboard API response body is too large");
+  }
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    contentType: response.headers.get("content-type") ?? "",
+    bodyText,
+  };
+}
+
 function normalizeRemoteWorkspace(value) {
   const workspacePath = String(value || "").trim().replaceAll("\\", "/").replace(/\/+$/, "");
   return /^[A-Za-z]:/.test(workspacePath)
@@ -2435,6 +2479,7 @@ function installTaskboardHostBinding(
         }
         return { userId: stableCodexUserId(account) };
       },
+      taskboardHttp: proxyTaskboardHttp,
       loadFrame: (request) => loadTaskboardFrameViaCdp(
         cdp,
         request.frameName,

@@ -103,6 +103,7 @@ import {
   taskboardStorage,
 } from "./storage";
 import {
+  isEmbeddedTaskboardTransport,
   installEmbeddedExternalLinkHandler,
   postEmbeddedHostMessage,
   setEmbeddedFrameChallenge,
@@ -605,6 +606,35 @@ function LocalRealtimeSync({
   }, [selectedProjectId, detailTaskId]);
 
   useEffect(() => {
+    if (isEmbeddedTaskboardTransport()) {
+      let disposed = false;
+      let requestPending = false;
+      void refreshProjectBoardDisplaySettings();
+      const poll = async () => {
+        if (requestPending) return;
+        requestPending = true;
+        const { selectedProjectId } = selectionRef.current;
+        const results = await Promise.allSettled([
+          refreshProjectList(),
+          ...(selectedProjectId
+            ? [refreshTasks(selectedProjectId, { quiet: true })]
+            : []),
+        ]);
+        if (!disposed) {
+          setConnection(results.some((result) => result.status === "rejected")
+            ? "reconnecting"
+            : "live");
+        }
+        requestPending = false;
+      };
+      const timer = window.setInterval(poll, 1_500);
+      void poll();
+      return () => {
+        disposed = true;
+        window.clearInterval(timer);
+      };
+    }
+
     const source = new EventSource(eventsUrl);
     let refreshTimer: number | undefined;
     let refreshProjectsPending = false;
