@@ -32,6 +32,7 @@ import type {
   TaskDraft,
   TaskStatus,
 } from "./types";
+import { fetchTaskboard, isEmbeddedTaskboardTransport } from "./embeddedHost.mjs";
 
 const DEFAULT_USER_ACTOR: ActorIdentity = {
   type: "user",
@@ -111,7 +112,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      response = await fetch(resolveTaskboardUrl(path), { ...init, headers });
+      response = await fetchTaskboard(path, { ...init, headers });
       break;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;
@@ -533,6 +534,10 @@ export function subscribeAiChatThread(
   onHint: (type: "ai.event" | "ai.run") => void,
   onError?: () => void,
 ): () => void {
+  if (isEmbeddedTaskboardTransport()) {
+    const timer = window.setInterval(() => onHint("ai.run"), 1_000);
+    return () => window.clearInterval(timer);
+  }
   const source = new EventSource(
     resolveTaskboardUrl(`/api/local/ai/threads/${encodeURIComponent(threadId)}/events`),
   );

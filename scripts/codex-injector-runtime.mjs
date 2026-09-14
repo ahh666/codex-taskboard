@@ -1,8 +1,73 @@
 const HOST_REQUEST_ERROR = "自动认领配置暂时无法应用，请刷新后重试";
 const AUTOMATION_SCHEMA_DIAGNOSTIC = "AUTOMATION_SCHEMA_MISMATCH";
+const TASKBOARD_HTTP_BODY_LIMIT = 25 * 1024 * 1024;
+const TASKBOARD_HTTP_BASE64_LIMIT = Math.ceil(TASKBOARD_HTTP_BODY_LIMIT / 3) * 4;
+const TASKBOARD_HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
+const TASKBOARD_HTTP_HEADERS = new Set([
+  "accept",
+  "content-type",
+  "x-taskboard-attachment-kind",
+  "x-taskboard-filename",
+  "x-taskboard-user-avatar",
+  "x-taskboard-user-id",
+  "x-taskboard-user-name",
+]);
+
+function parseTaskboardHttpRequest(request) {
+  if (typeof request.path !== "string") return null;
+  let normalizedUrl;
+  try {
+    normalizedUrl = new URL(request.path, "http://taskboard.invalid");
+  } catch {
+    return null;
+  }
+  if (
+    typeof request.method !== "string"
+    || !TASKBOARD_HTTP_METHODS.has(request.method)
+    || request.path.length === 0
+    || request.path.length > 8_192
+    || !request.path.startsWith("/api/")
+    || request.path.includes("//")
+    || /[\u0000-\u001f\u007f#\\]/.test(request.path)
+    || normalizedUrl.origin !== "http://taskboard.invalid"
+    || !normalizedUrl.pathname.startsWith("/api/")
+    || normalizedUrl.pathname === "/api/events"
+    || /^\/api\/local\/ai\/threads\/[^/]+\/events$/.test(normalizedUrl.pathname)
+    || !request.headers
+    || typeof request.headers !== "object"
+    || Array.isArray(request.headers)
+  ) return null;
+
+  const entries = Object.entries(request.headers);
+  if (entries.length > TASKBOARD_HTTP_HEADERS.size) return null;
+  const headers = {};
+  for (const [rawName, value] of entries) {
+    const name = rawName.toLowerCase();
+    if (
+      !TASKBOARD_HTTP_HEADERS.has(name)
+      || typeof value !== "string"
+      || value.length > 8_192
+      || /[\u0000\r\n]/.test(value)
+    ) return null;
+    headers[name] = value;
+  }
+
+  const hasBody = Object.hasOwn(request, "bodyBase64");
+  if (hasBody && (
+    typeof request.bodyBase64 !== "string"
+    || request.bodyBase64.length > TASKBOARD_HTTP_BASE64_LIMIT
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(request.bodyBase64)
+  )) return null;
+  if ((request.method === "GET" || request.method === "HEAD") && hasBody) return null;
+  return {
+    ...request,
+    headers,
+    ...(hasBody ? { bodyBase64: request.bodyBase64 } : {}),
+  };
+}
 
 function parseHostRequest(payload, parseAutomationRequest) {
-  if (typeof payload !== "string" || payload.length > 4_194_304) {
+  if (typeof payload !== "string" || payload.length > 36 * 1024 * 1024) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };
   }
 
@@ -19,8 +84,17 @@ function parseHostRequest(payload, parseAutomationRequest) {
     && /^[a-z0-9-]{1,80}$/i.test(request.id)
   ) ? request.id : null;
   if (!id) return { id: null, request: null, error: HOST_REQUEST_ERROR };
+  if (request.action !== "taskboard-http" && payload.length > 4_194_304) {
+    return { id, request: null, error: HOST_REQUEST_ERROR };
+  }
   if (request.action === "ensure") return { id, request, error: null };
   if (request.action === "read-current-user") return { id, request, error: null };
+  if (request.action === "taskboard-http") {
+    const parsed = parseTaskboardHttpRequest(request);
+    return parsed
+      ? { id, request: parsed, error: null }
+      : { id, request: null, error: HOST_REQUEST_ERROR };
+  }
   if (
     request.action === "load-frame"
     && typeof request.frameName === "string"
@@ -117,6 +191,8 @@ export async function handleHostBindingPayload(params, handlers) {
       result = await handlers.ensure();
     } else if (parsed.request.action === "read-current-user") {
       result = await handlers.readCurrentUser();
+    } else if (parsed.request.action === "taskboard-http") {
+      result = await handlers.taskboardHttp(parsed.request);
     } else if (parsed.request.action === "load-frame") {
       result = await handlers.loadFrame(parsed.request);
     } else if (parsed.request.action === "open-external") {

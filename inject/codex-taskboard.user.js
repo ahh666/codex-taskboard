@@ -1311,6 +1311,44 @@
     input.showPicker();
   }
 
+  async function handleTaskboardHttpRequest(payload) {
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+    if (!requestId || requestId.length > 80) return;
+    if (!isLocalTaskboardOrigin(taskboardOrigin)) return;
+    try {
+      const response = await requestHost("taskboard-http", {
+        method: payload?.method,
+        path: payload?.path,
+        headers: payload?.headers,
+        ...(Object.hasOwn(payload ?? {}, "bodyBase64")
+          ? { bodyBase64: payload.bodyBase64 }
+          : {}),
+      }, 65_000);
+      postToFrame({
+        type: "taskboard:http-response",
+        payload: {
+          requestId,
+          challenge: frameChallenge,
+          ok: true,
+          status: response.status,
+          statusText: response.statusText,
+          contentType: response.contentType,
+          bodyText: response.bodyText,
+        },
+      }, true);
+    } catch (error) {
+      postToFrame({
+        type: "taskboard:http-response",
+        payload: {
+          requestId,
+          challenge: frameChallenge,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }, true);
+    }
+  }
+
   function challengeFrameDocument(event) {
     if (!frame || event.currentTarget !== frame) return;
     frameReady = false;
@@ -1371,6 +1409,10 @@
     }
     if (message.type === "taskboard:date-picker-request") {
       handleDatePickerRequest(message.payload);
+      return;
+    }
+    if (message.type === "taskboard:http-request") {
+      void handleTaskboardHttpRequest(message.payload);
       return;
     }
     if (message.type === "taskboard:create-thread") void createThreadForTask(message.payload);

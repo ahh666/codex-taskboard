@@ -1,3 +1,5 @@
+import { fetchTaskboard } from "./embeddedHost.mjs";
+
 const memoryStorage = new Map<string, string>();
 const PROJECT_BOARD_DISPLAY_SETTINGS_LEGACY_KEY = "taskboard.project-board-display-settings.v3";
 export const PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX = "taskboard.project-board-display-settings.v3.";
@@ -13,7 +15,7 @@ function isProjectBoardDisplaySettingsKey(key: string) {
 }
 
 async function readServerStorage() {
-  const response = await fetch(new URL("api/client-storage", document.baseURI));
+  const response = await fetchTaskboard("/api/client-storage");
   if (!response.ok) throw new Error(`Taskboard storage returned ${response.status}`);
   const payload = await response.json() as { entries: Record<string, string> };
   if (localStorageBackend) {
@@ -44,7 +46,7 @@ function persist(key: string, value: string | null) {
     let retryDelay = RETRY_DELAY_MS;
     while (true) {
       try {
-        const response = await fetch(new URL("api/client-storage", document.baseURI), {
+        const response = await fetchTaskboard("/api/client-storage", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body,
