@@ -10,6 +10,7 @@ const pendingEmbeddedHttpRequests = new Map();
 const EMBEDDED_HTTP_TIMEOUT_MS = 65_000;
 
 export function isEmbeddedTaskboardTransport() {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
   if (window.parent === window) return false;
   try {
     return new URL(document.baseURI).searchParams.get("host") === "codex";
@@ -111,11 +112,13 @@ function receiveEmbeddedHostMessage(event) {
   }));
 }
 
-window.addEventListener("message", receiveEmbeddedHostMessage);
+if (typeof window !== "undefined") {
+  window.addEventListener("message", receiveEmbeddedHostMessage);
+}
 
 export async function fetchTaskboard(path, init = {}) {
   if (!isEmbeddedTaskboardTransport()) {
-    return fetch(new URL(String(path).replace(/^\//, ""), document.baseURI), init);
+    return fetch(new URL(String(path).replace(/^\//, ""), document.baseURI).href, init);
   }
   if (init.signal?.aborted) throw abortError();
 
