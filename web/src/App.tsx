@@ -1359,6 +1359,9 @@ export function App() {
       }];
     }) : []
   ), [executionTargetEnabled, hostContext?.projects]);
+  const defaultExecutionTarget = executionTargetOptions.find(
+    (option) => option.identity.codexProjectId === hostContext?.projectId,
+  )?.identity ?? null;
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   function openTaskContextMenu(task: Task, position: { x: number; y: number }) {
     if (
@@ -4479,6 +4482,7 @@ export function App() {
           developmentScanLoading={developmentScanLoading}
           executionTargetEnabled={executionTargetEnabled}
           executionTargetOptions={executionTargetOptions}
+          defaultExecutionTarget={defaultExecutionTarget}
           onCreateLabel={(label) => persistProjectLabel(label, editorProjectId ?? selectedProjectId)}
           onCancel={(draft) => {
             if (!editor.task) {

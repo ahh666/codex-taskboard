@@ -112,6 +112,7 @@ interface TaskEditorProps {
   currentUser: ActorIdentity;
   executionTargetEnabled: boolean;
   executionTargetOptions: CodexProjectOption[];
+  defaultExecutionTarget?: CodexProjectIdentity | null;
   developmentScan: DevelopmentScan;
   developmentScanLoading: boolean;
   onCreateLabel: (label: string) => Promise<void>;
@@ -177,6 +178,7 @@ export function TaskEditor({
   currentUser,
   executionTargetEnabled,
   executionTargetOptions,
+  defaultExecutionTarget,
   developmentScan,
   developmentScanLoading,
   onCreateLabel,
@@ -201,7 +203,11 @@ export function TaskEditor({
   const [assignee, setAssignee] = useState<ActorIdentity>(task?.assignee ?? initialDraft?.assignee ?? currentUser);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(task?.labels ?? initialDraft?.selectedLabels ?? []);
   const [executionTarget, setExecutionTarget] = useState<CodexProjectIdentity | null>(
-    task?.executionTarget ?? initialDraft?.executionTarget ?? null,
+    task
+      ? task.executionTarget
+      : initialDraft
+        ? initialDraft.executionTarget ?? null
+        : defaultExecutionTarget ?? null,
   );
   const [developmentContext, setDevelopmentContext] = useState<DevelopmentContext | null>(task?.developmentContext ?? initialDraft?.developmentContext ?? null);
   const [startDate] = useState(task?.startDate ?? initialDraft?.startDate ?? "");
