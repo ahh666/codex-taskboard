@@ -1261,17 +1261,31 @@
 
   async function handleAttachmentOpen(payload) {
     try {
-      await requestHost("open-attachment", {
+      const result = await requestHost("open-attachment", {
         attachmentId: payload?.attachmentId,
         filename: payload?.filename,
+        operation: payload?.operation,
+      });
+      postToFrame({
+        type: "taskboard:attachment-local-path",
+        payload: {
+          attachmentId: payload?.attachmentId,
+          filename: payload?.filename,
+          localPath: result.localPath ?? null,
+        },
       });
     } catch (_) {
+      postToFrame({
+        type: "taskboard:attachment-local-path",
+        payload: { attachmentId: payload?.attachmentId, filename: payload?.filename, localPath: null },
+      });
+      if (payload?.operation === "local-path") return;
       postToFrame({
         type: "taskboard:attachment-open-error",
         payload: {
           error: hostText(
-            "无法在 Finder 中显示附件，请重试。",
-            "Could not reveal the attachment in Finder. Try again.",
+            "无法显示附件所在位置，请重新打开附件后重试。",
+            "Could not show the attachment location. Open the attachment again and retry.",
           ),
         },
       });

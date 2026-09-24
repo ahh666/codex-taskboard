@@ -583,6 +583,39 @@ export function inlineMediaImages(segments: InlineMediaSegment[]): PendingInline
   return segments.filter((segment): segment is PendingInlineImage => segment.type === "pending-image");
 }
 
+export function appendUnreferencedAttachments(
+  value: string,
+  attachments: readonly Attachment[],
+): string {
+  const referenced = new Set<string>();
+  for (const segment of createInlineMediaSegments(value, [], attachments)) {
+    if (segment.type === "persisted-attachment") {
+      referenced.add(decodeURIComponent(segment.attachmentId));
+      continue;
+    }
+    if (segment.type !== "persisted-image") continue;
+    try {
+      const match = new URL(segment.url, document.baseURI).pathname.match(
+        /\/api\/attachments\/([^/]+)\/content$/,
+      );
+      if (match) referenced.add(decodeURIComponent(match[1]));
+    } catch {
+      // Ignore unrelated or malformed image URLs.
+    }
+  }
+  const missing = attachments.flatMap((attachment) => {
+    if (!attachment.bodyFallback || referenced.has(attachment.id)) return [];
+    referenced.add(attachment.id);
+    const label = attachment.filename.replace(/[\[\]]/g, "\\$&");
+    const image = attachment.contentType.startsWith("image/");
+    const url = image ? attachmentContentUrl(attachment) : attachmentDownloadUrl(attachment);
+    return [`${image ? "!" : ""}[${label}](${url})`];
+  });
+  return missing.length > 0
+    ? `${value}${value ? "\n\n" : ""}${missing.join("\n\n")}`
+    : value;
+}
+
 export function inlineMediaFiles(segments: InlineMediaSegment[]): PendingInlineAttachment[] {
   return segments.filter((segment): segment is PendingInlineAttachment => (
     segment.type === "pending-attachment"

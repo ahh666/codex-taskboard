@@ -7,6 +7,7 @@ import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
 import { getProjectSummary } from "../api";
 import { taskPriorityLabel, taskStatusLabel, useTaskboardI18n } from "../i18n";
 import { labelPresentation } from "../labels";
+import { actorKey } from "../actors";
 import type {
   TaskCardPresentation,
   TaskConversationItem,
@@ -673,7 +674,7 @@ export function DashboardView({
                 <div className="dashboard-role-list">
                   {roleContributions.map((item, index) => (
                     <div className="dashboard-role-row" key={`${item.actor.type}:${item.actor.id}`}>
-                      <ActorAvatar actor={item.actor} />
+                      <ActorAvatar actor={actorKey(item.actor) === actorKey(currentUser) ? currentUser : item.actor} />
                       <span className="dashboard-role-copy">
                         <strong>{item.actor.name}</strong>
                         <small>{text(

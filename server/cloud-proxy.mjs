@@ -99,6 +99,7 @@ async function prepareRequest(request, {
     if (isTaskMutation) delete payload.executionTarget;
     if (
       isConversationMutation
+      && !payload.agentSession
       && typeof payload.threadId === "string"
       && !Object.hasOwn(payload, "threadBinding")
       && typeof resolveThreadBinding === "function"

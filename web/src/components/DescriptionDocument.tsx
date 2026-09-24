@@ -1,6 +1,8 @@
 import { memo, useEffect, useState, type ClipboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { attachmentContentUrl } from "../api";
+import { postEmbeddedHostMessage } from "../embeddedHost.mjs";
+import { useTaskboardI18n } from "../i18n";
 import { readIssueIdentifier } from "../issueRoute";
 import type { Attachment, Task, TaskRelationSummary } from "../types";
 import { STATUS_DETAILS } from "./BoardColumn";
@@ -35,10 +37,77 @@ function referencedTask(
 }
 
 function referencedAttachment(href: string, attachments: Attachment[]): Attachment | null {
-  const match = new URL(href, document.baseURI).pathname.match(/\/api\/attachments\/([^/]+)\/download$/);
+  const match = new URL(href, document.baseURI).pathname.match(/\/api\/attachments\/([^/]+)\/(?:download|content)$/);
   if (!match) return null;
   const id = decodeURIComponent(match[1]);
   return attachments.find((attachment) => attachment.id === id) ?? null;
+}
+
+function AttachmentLocalActions({ attachment, onCopy }: {
+  attachment: Attachment;
+  onCopy: (path: string, announcement: string) => void;
+}) {
+  const { text } = useTaskboardI18n();
+  const [localPath, setLocalPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalPath(null);
+    if (new URL(document.baseURI).searchParams.get("host") !== "codex" || window.parent === window) return;
+    function receiveLocalPath(event: MessageEvent) {
+      if (event.source !== window.parent || event.data?.type !== "taskboard:attachment-local-path") return;
+      const payload = event.data.payload;
+      if (payload?.attachmentId !== attachment.id || payload?.filename !== attachment.filename) return;
+      setLocalPath(typeof payload.localPath === "string" ? payload.localPath : null);
+    }
+    function locate() {
+      postEmbeddedHostMessage({
+        type: "taskboard:open-attachment",
+        payload: { attachmentId: attachment.id, filename: attachment.filename, operation: "local-path" },
+      });
+    }
+    window.addEventListener("message", receiveLocalPath);
+    window.addEventListener("focus", locate);
+    locate();
+    return () => {
+      window.removeEventListener("message", receiveLocalPath);
+      window.removeEventListener("focus", locate);
+    };
+  }, [attachment.id, attachment.filename]);
+
+  if (!localPath) return null;
+  return (
+    <span className="attachment-local-actions">
+      <button
+        type="button"
+        className="icon-button"
+        aria-label={text("复制路径", "Copy path")}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onCopy(localPath, text("已复制文件路径", "File path copied"));
+        }}
+      >
+        <span aria-hidden="true">⧉</span>
+        <span className="attachment-action-tooltip" role="tooltip">{text("复制路径", "Copy path")}</span>
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label={text("打开", "Open")}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          postEmbeddedHostMessage({
+            type: "taskboard:open-attachment",
+            payload: { attachmentId: attachment.id, filename: attachment.filename, operation: "reveal" },
+          });
+        }}
+      >
+        <span aria-hidden="true">⌕</span>
+        <span className="attachment-action-tooltip" role="tooltip">{text("打开", "Open")}</span>
+      </button>
+    </span>
+  );
 }
 
 function fileSize(value: number): string {
@@ -54,6 +123,7 @@ export const DescriptionDocument = memo(function DescriptionDocument({
   attachments = [],
   enableImagePreview = false,
   onOpenAttachment,
+  onCopyAttachmentPath,
 }: {
   value: string;
   referenceTasks: Task[];
@@ -61,6 +131,7 @@ export const DescriptionDocument = memo(function DescriptionDocument({
   attachments?: Attachment[];
   enableImagePreview?: boolean;
   onOpenAttachment?: (event: MouseEvent<HTMLAnchorElement>, attachment: Attachment) => void;
+  onCopyAttachmentPath?: (path: string, announcement: string) => void;
 }) {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
 
@@ -82,7 +153,8 @@ export const DescriptionDocument = memo(function DescriptionDocument({
       onImageClick={enableImagePreview ? (event) => {
         event.preventDefault();
         event.stopPropagation();
-        setPreviewImage({ src: event.currentTarget.currentSrc, alt: event.currentTarget.alt });
+        const src = event.currentTarget.currentSrc || event.currentTarget.src;
+        setPreviewImage({ src, alt: event.currentTarget.alt });
       } : undefined}
       onCopy={(event: ClipboardEvent<HTMLDivElement>) => {
         const selection = event.currentTarget.ownerDocument.getSelection();
@@ -152,6 +224,14 @@ export const DescriptionDocument = memo(function DescriptionDocument({
           </span>
         );
       }}
+      renderLinkActions={onCopyAttachmentPath ? (href) => {
+        const attachment = href ? referencedAttachment(href, attachments) : null;
+        return attachment
+          && !attachment.contentType.startsWith("video/")
+          && !attachment.contentType.startsWith("image/")
+          ? <AttachmentLocalActions key={attachment.id} attachment={attachment} onCopy={onCopyAttachmentPath} />
+          : null;
+      } : undefined}
       onLinkClick={(event, href) => {
         const attachment = href ? referencedAttachment(href, attachments) : null;
         if (attachment && onOpenAttachment) {

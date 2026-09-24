@@ -1,3 +1,4 @@
+import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import {
   Fragment,
   lazy,
@@ -3151,6 +3152,15 @@ export function App() {
   }
 
   function openTaskConversation(conversation: TaskConversationItem) {
+    if (conversation.kind === "agent-session" && conversation.agentSession) {
+      const { platform, sessionId } = conversation.agentSession;
+      const label = agentPlatformLabel(platform);
+      void copyText(
+        sessionResumeCommand(platform, sessionId),
+        text(`${label} 恢复命令已复制。`, `${label} resume command copied.`),
+      );
+      return;
+    }
     if (conversation.kind === "local-ai" && conversation.aiThreadId) {
       aiOpenThreadRequestSequenceRef.current += 1;
       setAiOpenThreadRequest({

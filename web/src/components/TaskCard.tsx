@@ -517,19 +517,21 @@ export function TaskCard({
             <span>{text("完成", "Complete")}</span>
           </button>
         )}
-        {variant === "sidebar" && showCreatedAt && (
-          <span className="sidebar-card-creator">
-            <AssigneeControl
-              task={task}
-              participants={task.participants.length ? task.participants : [creator]}
-              currentUser={currentUser}
-              disabled={propertyDisabled || task.source !== "local"}
-              open={propertyMenu === "assignee"}
-              onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
-              onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
-            />
-            <span>{createdDate(task.createdAt, locale, text)}</span>
-          </span>
+        {variant === "sidebar" && (
+          showCreatedAt ? (
+            <span className="sidebar-card-creator">
+              <AssigneeControl
+                task={task}
+                participants={task.participants.length ? task.participants : [creator]}
+                currentUser={currentUser}
+                disabled={propertyDisabled || task.source !== "local"}
+                open={propertyMenu === "assignee"}
+                onOpenChange={(open) => setPropertyMenu(open ? "assignee" : null)}
+                onChange={(assigneeTarget) => updateProperty({ assigneeTarget }, "assignee")}
+              />
+              <span>{createdDate(task.createdAt, locale, text)}</span>
+            </span>
+          ) : null
         )}
       </div>
 
