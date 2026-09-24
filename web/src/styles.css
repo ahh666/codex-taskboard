@@ -2606,6 +2606,13 @@ kbd {
   line-height: 18px;
 }
 
+.issue-sub-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .card-reference {
   display: flex;
   align-items: center;

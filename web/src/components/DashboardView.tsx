@@ -62,6 +62,34 @@ interface ProgressForecast {
   conservativeAt: number;
 }
 
+interface ProjectCompletion {
+  parentCount: number;
+  completedParents: number;
+  percentage: number;
+}
+
+function calculateProjectCompletion(tasks: Task[]): ProjectCompletion {
+  const activeTasks = tasks.filter((task) => task.status !== "canceled");
+  const taskById = new Map(activeTasks.map((task) => [task.id, task]));
+  const parents = activeTasks.filter((task) => task.relations.parent === null);
+  if (parents.length === 0) return { parentCount: 0, completedParents: 0, percentage: 0 };
+  const completedParents = parents.filter((task) => task.status === "done").length;
+  const childContribution = parents.reduce((total, parent) => {
+    if (parent.status === "done") return total;
+    const children = parent.relations.subIssues
+      .map((child) => taskById.get(child.id))
+      .filter((child): child is Task => Boolean(child));
+    return total + (children.length > 0
+      ? children.filter((child) => child.status === "done").length / children.length
+      : 0);
+  }, 0);
+  return {
+    parentCount: parents.length,
+    completedParents,
+    percentage: Math.round(((completedParents + childContribution) / parents.length) * 100),
+  };
+}
+
 function chartDate(value: number, locale: string, referenceValue?: number) {
   const includeYear = referenceValue !== undefined
     && new Date(value).getFullYear() !== new Date(referenceValue).getFullYear();
@@ -241,9 +269,7 @@ export function DashboardView({
     .filter((task) => task.dueDate && dayValue(task.dueDate) <= upcomingEnd)
     .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))
     .slice(0, 5);
-  const completionRate = tasks.length
-    ? Math.round((completedTasks.length / tasks.length) * 100)
-    : 0;
+  const projectCompletion = calculateProjectCompletion(tasks);
   const aggregateCreatedAt = isAllProjects
     ? tasks.reduce<string | null>((earliest, task) => (
         !earliest || task.createdAt < earliest ? task.createdAt : earliest
@@ -508,10 +534,14 @@ export function DashboardView({
           <header className="dashboard-heading">
             <h1>{text("项目完成度", "Project completion")}</h1>
             <div className="dashboard-hero-value">
-              <strong>{completionRate}%</strong>
+              <strong>{projectCompletion.percentage}%</strong>
               <span>{text(
-                `${completedTasks.length} 个已完成 · ${activeTasks.length} 个尚未结束`,
-                `${completedTasks.length} completed · ${activeTasks.length} remaining`,
+                projectCompletion.parentCount > 0
+                  ? `${projectCompletion.completedParents}/${projectCompletion.parentCount} 个顶层议题完成 · ${completedTasks.length} 个议题已完成`
+                  : "暂无可计算的议题",
+                projectCompletion.parentCount > 0
+                  ? `${projectCompletion.completedParents}/${projectCompletion.parentCount} top-level issues complete · ${completedTasks.length} issues complete`
+                  : "No issues to calculate",
               )}</span>
             </div>
           </header>

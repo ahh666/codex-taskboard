@@ -1809,6 +1809,10 @@
 
   function mountActivePage() {
     if (!active) return false;
+    if (document.querySelector('nav[aria-label="Settings"], nav[aria-label="设置"]')) {
+      closeTaskboard(false);
+      return false;
+    }
     if (!page) page = createPage();
     const mount = findPageMount();
     if (!mount) return false;
@@ -1869,6 +1873,12 @@
   }
 
   function isNativePageNavigation(target) {
+    const settingsControl = target?.closest?.("button,a,[role='button'],[role='menuitem']");
+    const settingsLabel = settingsControl?.cloneNode(true);
+    settingsLabel?.querySelectorAll("span.ms-2.shrink-0.text-xs.text-codex-description")
+      .forEach((shortcut) => shortcut.remove());
+    if (buttonMatches(settingsLabel, ["设置", "settings"])) return true;
+
     const clickable = target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest(`#${ENTRY_ID}`)) return false;
     if (!clickable.closest("aside nav[role='navigation']")) return false;
