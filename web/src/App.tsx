@@ -95,7 +95,7 @@ import {
   type NewTaskCreateOptions,
   type NewTaskEditorDraft,
 } from "./components/TaskEditor";
-import { TaskFilterMenu } from "./components/TaskFilterMenu";
+import { TaskFilterMenu, type TaskSort } from "./components/TaskFilterMenu";
 import {
   PROJECT_BOARD_DISPLAY_SETTINGS_KEY_PREFIX,
   projectBoardDisplaySettingsStorageEntries,
@@ -820,6 +820,7 @@ export function App() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState(readTaskFilters);
+  const [taskSort, setTaskSort] = useState<TaskSort>("default");
   const [boardView, setBoardView] = useState<BoardView>(() => readProjectBoardView(initialProjectId));
   const [projectBoardDisplaySettings, setProjectBoardDisplaySettings] = useState(
     readProjectBoardDisplaySettings,
@@ -2394,15 +2395,26 @@ export function App() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [boardView, contextMenu, detailTaskId, editor, isExternalProject, projectMenuOpen, selectedProjectId]);
 
+  const taskComparator = useMemo(() => {
+    if (taskSort === "name") {
+      return (left: Task, right: Task) => left.title.localeCompare(right.title, language, { numeric: true });
+    }
+    if (taskSort === "priority") {
+      const rank = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 };
+      return (left: Task, right: Task) => rank[left.priority] - rank[right.priority];
+    }
+    return () => 0;
+  }, [language, taskSort]);
+
   const filteredTasks = useMemo(() => {
     return tasks.filter(
       (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
-    );
-  }, [filters, language, search, tasks]);
+    ).sort(taskComparator);
+  }, [filters, language, search, taskComparator, tasks]);
 
   const filteredArchivedTasks = useMemo(() => archivedTasks.filter(
     (task) => matchesTaskSearch(task, search, language) && matchesTaskFilters(task, filters),
-  ), [archivedTasks, filters, language, search]);
+  ).sort(taskComparator), [archivedTasks, filters, language, search, taskComparator]);
 
   const activeFilterCount = taskFilterCount(filters);
   const hasActiveTaskFilters = Boolean(search.trim()) || activeFilterCount > 0;
@@ -2801,12 +2813,13 @@ export function App() {
     setDraggedTaskId(null);
     setDraggedTaskHeight(0);
     setDropTarget(null);
-    if (!task) return;
+    if (!task || (taskSort !== "default" && task.status === destination)) return;
     setSettlingTaskId(task.id);
     window.setTimeout(() => {
       setSettlingTaskId((current) => current === task.id ? null : current);
     }, 220);
-    void moveTask(task, destination, beforeTaskId, true);
+    if (taskSort === "default") void moveTask(task, destination, beforeTaskId, true);
+    else void moveTask(task, destination);
   }
 
   async function updateTaskProperties(task: Task, changes: Partial<TaskDraft>): Promise<Task> {
@@ -3912,6 +3925,8 @@ export function App() {
               labels={availableLabels}
               filters={filters}
               onChange={setFilters}
+              sort={taskSort}
+              onSortChange={setTaskSort}
             />
             {boardView === "issues" && !isFeishuProject && (isAllProjects || selectedProject) && (
               <BoardCardDisplayMenu
@@ -4176,6 +4191,7 @@ export function App() {
                         currentUser={currentUser}
                         showCover={boardDisplaySettings.cover}
                         showBody={boardDisplaySettings.body}
+                        showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
                         createEnabled={!isExternalProject}
                         onCreateLabel={persistProjectLabel}
                         onCreate={(initialStatus) => setEditor({ task: null, status: initialStatus })}
@@ -4212,6 +4228,7 @@ export function App() {
                     currentUser={currentUser}
                     showCover={boardDisplaySettings.cover}
                     showBody={boardDisplaySettings.body}
+                    showCreatedAt={Boolean(boardDisplaySettings.createdAt)}
                     onCreateLabel={persistProjectLabel}
                     restoringTaskId={restoringTaskId}
                     deletingTaskId={deletingArchivedTaskId}

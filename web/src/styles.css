@@ -1840,6 +1840,7 @@ kbd {
 
 .task-filter-item {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   width: 100%;
   min-width: 0;
@@ -1972,6 +1973,7 @@ kbd {
 }
 
 .task-filter-section-label {
+  flex-shrink: 0;
   height: 27px;
   margin: 5px -6px 0;
   padding: 7px 13px 0;
@@ -1982,6 +1984,7 @@ kbd {
 }
 
 .task-filter-unmatched {
+  flex-shrink: 0;
   opacity: 0.56;
 }
 
@@ -2593,6 +2596,14 @@ kbd {
   position: relative;
   height: 16px;
   min-width: 0;
+}
+
+.task-card-created-at {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .card-reference {
