@@ -49,7 +49,7 @@ const COMMAND_OPTIONS = new Map([
       "status",
       "priority",
       "labels",
-      "thread-id",
+      "thread-id", "agent-platform", "session-id",
       "execution-codex-project-id",
       "execution-codex-project-kind",
       "execution-codex-host-id",
@@ -74,7 +74,7 @@ const COMMAND_OPTIONS = new Map([
       "status",
       "priority",
       "labels",
-      "thread-id",
+      "thread-id", "agent-platform", "session-id",
       "execution-codex-project-id",
       "execution-codex-project-kind",
       "execution-codex-host-id",
@@ -92,7 +92,7 @@ const COMMAND_OPTIONS = new Map([
   ],
   ["issue move", new Set([
     "status",
-    "thread-id",
+    "thread-id", "agent-platform", "session-id",
     "binding-thread-id",
     "binding-codex-project-id",
     "binding-codex-project-kind",
@@ -102,15 +102,15 @@ const COMMAND_OPTIONS = new Map([
     "if-version",
     "json",
   ])],
-  ["issue archive", new Set(["thread-id", "if-version", "json"])],
-  ["issue restore", new Set(["thread-id", "if-version", "json"])],
+  ["issue archive", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
+  ["issue restore", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["issue tree", new Set(["direction", "depth", "json"])],
-  ["issue relation", new Set(["type", "issue", "thread-id", "if-version", "json"])],
+  ["issue relation", new Set(["type", "issue", "thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["comment list", new Set(["after", "json"])],
   ["comment add", new Set([
     "body",
     "body-file",
-    "thread-id",
+    "thread-id", "agent-platform", "session-id",
     "binding-thread-id",
     "binding-codex-project-id",
     "binding-codex-project-kind",
@@ -119,8 +119,8 @@ const COMMAND_OPTIONS = new Map([
     "clear-binding-thread",
     "json",
   ])],
-  ["comment update", new Set(["body", "thread-id", "if-version", "json"])],
-  ["comment delete", new Set(["thread-id", "if-version", "json"])],
+  ["comment update", new Set(["body", "thread-id", "agent-platform", "session-id", "if-version", "json"])],
+  ["comment delete", new Set(["thread-id", "agent-platform", "session-id", "if-version", "json"])],
   ["attachment list", new Set(["task", "comment", "after", "json"])],
   ["attachment download", new Set(["output", "json"])],
   ["attachment upload", new Set(["file", "task", "comment", "content-type", "kind", "json"])],
@@ -442,7 +442,7 @@ async function execute(parsed, overrides) {
       }
       return api.request("POST", `${taskPath(parsed.operands[0])}/comments`, {
         body,
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         ...optionalField("threadBinding", threadBindingFromOptions(parsed.options)),
       });
     }
@@ -450,13 +450,13 @@ async function execute(parsed, overrides) {
       expectOperandCount(parsed, 1);
       return api.request("PATCH", commentPath(parsed.operands[0]), {
         body: requiredOption(parsed.options, "body"),
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
     case "comment delete":
       expectOperandCount(parsed, 1);
       return api.request("DELETE", commentPath(parsed.operands[0]), {
-        threadId: resolveThreadId(parsed.options, overrides),
+        ...resolveConversationAttribution(parsed.options, overrides),
         version: explicitVersion(parsed.options["if-version"]),
       });
     case "attachment list": {
@@ -847,7 +847,7 @@ async function createIssue(api, options, overrides) {
   const developmentContext = developmentContextFromOptions(options, overrides);
   const executionTarget = executionTargetFromOptions(options);
   const recurrence = recurrenceFromOptions(options);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   return api.request("POST", "/api/tasks", {
     projectId: requiredOption(options, "project"),
     title: requiredOption(options, "title"),
@@ -855,7 +855,7 @@ async function createIssue(api, options, overrides) {
     status,
     priority,
     labels: parseLabels(options.labels),
-    threadId,
+    ...attribution,
     ...optionalField("executionTarget", executionTarget),
     ...optionalField("developmentContext", developmentContext),
     ...optionalField("startDate", options["start-date"]),
@@ -871,7 +871,7 @@ async function updateIssue(api, taskId, options, overrides) {
   const developmentContext = developmentContextFromOptions(options, overrides);
   const executionTarget = executionTargetFromOptions(options);
   const recurrence = recurrenceFromOptions(options);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const patch = {
     ...optionalField("projectId", options.project),
     ...optionalField("title", options.title),
@@ -888,10 +888,10 @@ async function updateIssue(api, taskId, options, overrides) {
     patch.description = await resolveDescription(options, overrides);
   }
 
-  if (Object.keys(patch).length === 0) {
+  if (Object.keys(patch).length === 0 && attribution.agentSession === undefined) {
     throw usageError("issue update requires at least one field to update");
   }
-  patch.threadId = threadId;
+  Object.assign(patch, attribution);
   patch.version = await resolveVersion(api, taskId, options["if-version"]);
   return api.request("PATCH", taskPath(taskId), patch);
 }
@@ -899,11 +899,11 @@ async function updateIssue(api, taskId, options, overrides) {
 async function moveIssue(api, taskId, options, overrides) {
   const status = requiredOption(options, "status");
   assertStatus(status);
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const threadBinding = threadBindingFromOptions(options);
   return api.request("POST", `${taskPath(taskId)}/move`, {
     status,
-    threadId,
+    ...attribution,
     ...optionalField("threadBinding", threadBinding),
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
@@ -997,9 +997,9 @@ function executionTargetFromOptions(options) {
 }
 
 async function archiveIssue(api, taskId, options, overrides, action) {
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   return api.request("POST", `${taskPath(taskId)}/${action}`, {
-    threadId,
+    ...attribution,
     version: await resolveVersion(api, taskId, options["if-version"]),
   });
 }
@@ -1027,12 +1027,12 @@ async function mutateIssueRelation(api, action, taskId, options, overrides) {
     throw usageError("--type must be parent, blocks, blocked_by, or related");
   }
   const relatedTaskId = requiredOption(options, "issue");
-  const threadId = resolveThreadId(options, overrides);
+  const attribution = resolveConversationAttribution(options, overrides);
   const version = await resolveVersion(api, taskId, options["if-version"]);
   return api.request(
     action === "add" ? "POST" : "DELETE",
     `${taskPath(taskId)}/relations/${type}/${encodeURIComponent(relatedTaskId)}`,
-    { threadId, version },
+    { ...attribution, version },
   );
 }
 
@@ -1143,11 +1143,41 @@ function recurrenceFromOptions(options) {
   return { interval, unit };
 }
 
+function parseAgentSession(value) {
+  if (!["claude", "pi", "agy", "grok"].includes(value.platform)) {
+    throw usageError("--agent-platform must be claude, pi, agy, or grok");
+  }
+  const maxLength = value.platform === "pi" ? 4096 : 256;
+  if (
+    typeof value.sessionId !== "string"
+    || value.sessionId.trim().length === 0
+    || value.sessionId.length > maxLength
+    || /^\s*-/.test(value.sessionId)
+    || /[\x00-\x1f\x7f]/.test(value.sessionId)
+  ) {
+    throw usageError(`--session-id must contain 1 to ${maxLength} characters without control characters or a leading option dash`);
+  }
+  return value;
+}
+
+function resolveConversationAttribution(options, overrides) {
+  if (options["agent-platform"] !== undefined || options["session-id"] !== undefined) {
+    if (options["thread-id"] !== undefined) {
+      throw usageError("Use --agent-platform with --session-id, or Codex --thread-id, not both");
+    }
+    return { agentSession: parseAgentSession({
+      platform: requiredOption(options, "agent-platform"),
+      sessionId: requiredOption(options, "session-id"),
+    }) };
+  }
+  return { threadId: resolveThreadId(options, overrides) };
+}
+
 function resolveThreadId(options, overrides) {
   const env = overrides.env ?? process.env;
   const value = options["thread-id"] ?? env.CODEX_THREAD_ID;
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw usageError("Codex conversation attribution requires --thread-id or CODEX_THREAD_ID");
+    throw usageError("Conversation attribution requires --agent-platform with --session-id, or Codex --thread-id / CODEX_THREAD_ID");
   }
   const threadId = value.trim();
   if (threadId.length > 256) {

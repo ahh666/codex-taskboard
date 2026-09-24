@@ -167,7 +167,7 @@ test("comments upload and render their own attachments in the content flow", () 
   assert.match(detailSource, /commentInlineFiles/);
   assert.match(detailSource, /uploadCommentAttachment\(comment\.id, file\.file, "attachment"\)/);
   assert.match(detailSource, /resolveInlineAttachmentMarkdown/);
-  assert.match(detailSource, /createInlineMediaSegments\(comment\.body, referenceTasks, comment\.attachments\)/);
+  assert.match(detailSource, /appendUnreferencedAttachments\(comment\.body, comment\.attachments\)/);
   assert.match(detailSource, /attachments=\{comment\.attachments\}/);
   assert.match(detailSource, /onOpenAttachment=\{handleAttachmentDownload\}/);
   assert.match(composerSource, /className="inline-media-attachment"/);

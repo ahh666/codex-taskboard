@@ -674,14 +674,14 @@ test("context current falls back to the local project", async () => {
   assert.equal(result.stdout.project.id, "local");
 });
 
-test("issue and comment writes require Codex conversation attribution", async () => {
+test("issue and comment writes require conversation attribution", async () => {
   const issueResult = await run(
     ["issue", "update", "TASK-1", "--title", "No attribution", "--if-version", "1"],
     async () => assert.fail("fetch should not be called"),
     { env: {} },
   );
   assert.equal(issueResult.exitCode, 2);
-  assert.match(issueResult.stderr.error.message, /--thread-id or CODEX_THREAD_ID/);
+  assert.match(issueResult.stderr.error.message, /--agent-platform with --session-id, or Codex --thread-id \/ CODEX_THREAD_ID/);
 
   const commentResult = await run(
     ["comment", "add", "TASK-1", "--body", "No attribution"],
@@ -689,7 +689,7 @@ test("issue and comment writes require Codex conversation attribution", async ()
     { env: {} },
   );
   assert.equal(commentResult.exitCode, 2);
-  assert.match(commentResult.stderr.error.message, /--thread-id or CODEX_THREAD_ID/);
+  assert.match(commentResult.stderr.error.message, /--agent-platform with --session-id, or Codex --thread-id \/ CODEX_THREAD_ID/);
 });
 
 test("manual linked-thread options and commands are no longer accepted", async () => {

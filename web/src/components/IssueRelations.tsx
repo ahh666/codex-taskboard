@@ -156,6 +156,7 @@ interface RelationActions {
   task: Task;
   tasks: Task[];
   onOpenTask: (task: TaskRelationSummary) => void;
+  onCreateChild?: (task: Task) => void;
   onAddRelation: (
     task: Task,
     type: IssueRelationType,
@@ -332,6 +333,7 @@ export function IssueSubIssues({
   task,
   tasks,
   onOpenTask,
+  onCreateChild,
   onAddRelation,
   onRemoveRelation,
 }: RelationActions) {
@@ -370,19 +372,31 @@ export function IssueSubIssues({
             </span>
           )}
         </div>
-        <IssuePicker
-          label={text("添加子议题", "Add sub-issue")}
-          candidates={candidates}
-          disabled={savingId !== null}
-          onSelect={async (candidate) => {
-            setSavingId(candidate.id);
-            try {
-              await onAddRelation(candidate, "parent", task.id);
-            } finally {
-              setSavingId(null);
-            }
-          }}
-        />
+        <div className="issue-sub-issue-actions">
+          {onCreateChild && (
+            <button
+              className="issue-relation-add"
+              type="button"
+              onClick={() => onCreateChild(task)}
+            >
+              <PlusIcon color="currentColor" size={13} />
+              <span>{text("新建子议题", "Create sub-issue")}</span>
+            </button>
+          )}
+          <IssuePicker
+            label={text("添加已有子议题", "Add existing sub-issue")}
+            candidates={candidates}
+            disabled={savingId !== null}
+            onSelect={async (candidate) => {
+              setSavingId(candidate.id);
+              try {
+                await onAddRelation(candidate, "parent", task.id);
+              } finally {
+                setSavingId(null);
+              }
+            }}
+          />
+        </div>
       </header>
       {subIssues.length > 0 && (
         <div className="issue-sub-issue-list">

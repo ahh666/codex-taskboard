@@ -559,6 +559,34 @@ function parseThreadId(value) {
   return stringField(value, "threadId", { required: true, maxLength: 256 });
 }
 
+function parseAgentSession(value) {
+  if (value === undefined || value === null) return value;
+  assertPlainObject(value);
+  assertAllowedKeys(value, new Set(["platform", "sessionId"]));
+  if (!["claude", "pi", "agy", "grok"].includes(value.platform)) {
+    throw new ApiError(400, "INVALID_FIELD", "agentSession.platform must be claude, pi, agy, or grok");
+  }
+  const maxLength = value.platform === "pi" ? 4096 : 256;
+  if (
+    typeof value.sessionId !== "string"
+    || value.sessionId.trim().length === 0
+    || value.sessionId.length > maxLength
+    || /^\s*-/.test(value.sessionId)
+    || /[\x00-\x1f\x7f]/.test(value.sessionId)
+  ) {
+    throw new ApiError(400, "INVALID_FIELD", `agentSession.sessionId must contain 1 to ${maxLength} characters, without control characters or a leading option dash`);
+  }
+  return { platform: value.platform, sessionId: value.sessionId };
+}
+
+function parseInputAgentSession(body) {
+  const agentSession = parseAgentSession(body.agentSession);
+  if (agentSession && body.threadId !== undefined) {
+    throw new ApiError(400, "INVALID_FIELD", "Use agentSession or Codex threadId for controller attribution, not both");
+  }
+  return agentSession;
+}
+
 function parseThreadBinding(value) {
   if (value === undefined || value === null) return value;
   assertPlainObject(value);
@@ -714,7 +742,7 @@ function resolveAssignee(target, actor) {
 function parseTaskCreate(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding",
+    "projectId", "title", "description", "status", "priority", "labels", "sortOrder", "threadId", "threadBinding", "agentSession",
     "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const projectId = validateProjectId(body.projectId ?? DEFAULT_PROJECT_ID);
@@ -728,6 +756,7 @@ function parseTaskCreate(body) {
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
     assigneeTarget: parseAssigneeTarget(body.assigneeTarget),
     executionTarget: parseExecutionTarget(body.executionTarget ?? null),
     developmentContext: parseDevelopmentContext(body.developmentContext ?? null),
@@ -744,12 +773,13 @@ function parseTaskCreate(body) {
 function parseTaskPatch(body) {
   assertPlainObject(body);
   assertAllowedKeys(body, new Set([
-    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding",
+    "version", "projectId", "title", "description", "status", "priority", "labels", "threadId", "threadBinding", "agentSession",
     "assigneeTarget", "executionTarget", "developmentContext", "startDate", "dueDate", "recurrence",
   ]));
   const version = parseVersion(body.version);
   const threadId = parseThreadId(body.threadId);
   const threadBinding = parseThreadBinding(body.threadBinding);
+  const agentSession = parseInputAgentSession(body);
   const assigneeTarget = parseAssigneeTarget(body.assigneeTarget);
   const changes = {};
   if (body.projectId !== undefined) changes.projectId = validateProjectId(body.projectId);
@@ -766,31 +796,33 @@ function parseTaskPatch(body) {
   if (changes.recurrence && body.dueDate === null) {
     throw new ApiError(400, "INVALID_FIELD", "A recurring issue requires 'dueDate'");
   }
-  if (Object.keys(changes).length === 0 && assigneeTarget === undefined) {
+  if (Object.keys(changes).length === 0 && assigneeTarget === undefined && agentSession === undefined) {
     throw new ApiError(400, "INVALID_BODY", "PATCH requires at least one task field");
   }
-  return { version, changes, threadId, threadBinding, assigneeTarget };
+  return { version, changes, threadId, threadBinding, agentSession, assigneeTarget };
 }
 
 function parseMove(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId", "threadBinding"]));
+  assertAllowedKeys(body, new Set(["version", "status", "sortOrder", "threadId", "threadBinding", "agentSession"]));
   return {
     version: parseVersion(body.version),
     status: parseStatus(body.status),
     sortOrder: body.sortOrder === undefined ? undefined : parseSortOrder(body.sortOrder),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
   };
 }
 
 function parseArchive(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding"]));
+  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding", "agentSession"]));
   return {
     version: parseVersion(body.version),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
   };
 }
 
@@ -804,11 +836,12 @@ function parseRelationOrigin(value) {
 
 function parseRelationMutation(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding", "origin"]));
+  assertAllowedKeys(body, new Set(["version", "threadId", "threadBinding", "agentSession", "origin"]));
   return {
     version: parseVersion(body.version),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
     origin: parseRelationOrigin(body.origin),
   };
 }
@@ -826,17 +859,18 @@ function parseIssueRelationType(value) {
 
 function parseCommentCreate(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding"]));
+  assertAllowedKeys(body, new Set(["body", "threadId", "threadBinding", "agentSession"]));
   return {
     body: stringField(body.body ?? "", "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
   };
 }
 
 function parseCommentPatch(body) {
   assertPlainObject(body);
-  assertAllowedKeys(body, new Set(["version", "body", "threadId", "threadBinding"]));
+  assertAllowedKeys(body, new Set(["version", "body", "threadId", "threadBinding", "agentSession"]));
   if (body.body === undefined) {
     throw new ApiError(400, "INVALID_FIELD", "'body' is required");
   }
@@ -845,6 +879,7 @@ function parseCommentPatch(body) {
     body: stringField(body.body, "body", { maxLength: 100_000 }),
     threadId: parseThreadId(body.threadId),
     threadBinding: parseThreadBinding(body.threadBinding),
+    agentSession: parseInputAgentSession(body),
   };
 }
 
@@ -1910,7 +1945,7 @@ export function createTaskboardServer(options = {}) {
     };
   }
   function resolveInputThreadBinding(input) {
-    if (input.threadBinding !== undefined) return input;
+    if (input.threadBinding !== undefined || input.agentSession) return input;
     const threadBinding = currentHostThreadBinding(input.threadId);
     return threadBinding ? { ...input, threadBinding } : input;
   }
@@ -3097,7 +3132,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "POST") {
           assertFeishuTaskWriteAvailable(database.getTask(taskId), "修改依赖关系");
           assertFeishuTaskWriteAvailable(database.getTask(relatedTaskId), "修改依赖关系");
-          const { version, threadId, threadBinding, origin } = resolveInputThreadBinding(
+          const { version, threadId, threadBinding, agentSession, origin } = resolveInputThreadBinding(
             parseRelationMutation(await readJson(request)),
           );
           const result = database.addTaskRelation(
@@ -3109,6 +3144,7 @@ export function createTaskboardServer(options = {}) {
             threadBinding,
             actorFromRequest(request),
             origin,
+            agentSession,
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
@@ -3116,7 +3152,7 @@ export function createTaskboardServer(options = {}) {
         if (request.method === "DELETE") {
           assertFeishuTaskWriteAvailable(database.getTask(taskId), "修改依赖关系");
           assertFeishuTaskWriteAvailable(database.getTask(relatedTaskId), "修改依赖关系");
-          const { version, threadId, threadBinding, origin } = resolveInputThreadBinding(
+          const { version, threadId, threadBinding, agentSession, origin } = resolveInputThreadBinding(
             parseRelationMutation(await readJson(request)),
           );
           const result = database.removeTaskRelation(
@@ -3128,6 +3164,7 @@ export function createTaskboardServer(options = {}) {
             threadBinding,
             actorFromRequest(request),
             origin,
+            agentSession,
           );
           events.emit("task.relation.updated", result);
           return sendJson(response, 200, result);
@@ -3219,6 +3256,7 @@ export function createTaskboardServer(options = {}) {
             patch.body,
             patch.threadId,
             patch.threadBinding,
+            patch.agentSession,
           );
           const task = database.getTask(comment.taskId);
           events.emit("comment.updated", { comment, task });
@@ -3448,6 +3486,7 @@ export function createTaskboardServer(options = {}) {
             changes,
             threadId,
             threadBinding,
+            agentSession,
             assigneeTarget,
           } = resolveInputThreadBinding(parseTaskPatch(await readJson(request)));
           const source = database.getTaskSource(id);
@@ -3515,7 +3554,7 @@ export function createTaskboardServer(options = {}) {
           }
           let task;
           try {
-            task = database.updateTask(id, version, changes, threadId, threadBinding, actor);
+            task = database.updateTask(id, version, changes, threadId, threadBinding, actor, agentSession);
           } catch (error) {
             if (jiraChanged || feishuChanged) {
               try {
@@ -3581,6 +3620,7 @@ export function createTaskboardServer(options = {}) {
             move.threadId,
             move.threadBinding,
             actorFromRequest(request),
+            move.agentSession,
           );
           events.emit("task.moved", { task });
           return sendJson(response, 200, { task });
@@ -3590,7 +3630,7 @@ export function createTaskboardServer(options = {}) {
           if (current && current.source !== "local") {
             throw new ApiError(409, "EXTERNAL_ARCHIVE_UNAVAILABLE", "外部同步任务由同步范围自动管理，不能手动归档");
           }
-          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+          const { version, threadId, threadBinding, agentSession } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
           );
           const task = database.archiveTask(
@@ -3599,6 +3639,7 @@ export function createTaskboardServer(options = {}) {
             threadId,
             threadBinding,
             actorFromRequest(request),
+            agentSession,
           );
           events.emit("task.archived", { task });
           return sendJson(response, 200, { task });
@@ -3608,7 +3649,7 @@ export function createTaskboardServer(options = {}) {
           if (current && current.source !== "local") {
             throw new ApiError(409, "EXTERNAL_RESTORE_UNAVAILABLE", "外部同步任务由同步范围自动管理，不能手动恢复");
           }
-          const { version, threadId, threadBinding } = resolveInputThreadBinding(
+          const { version, threadId, threadBinding, agentSession } = resolveInputThreadBinding(
             parseArchive(await readJson(request)),
           );
           const task = database.restoreTask(
@@ -3617,6 +3658,7 @@ export function createTaskboardServer(options = {}) {
             threadId,
             threadBinding,
             actorFromRequest(request),
+            agentSession,
           );
           events.emit("task.restored", { task });
           return sendJson(response, 200, { task });

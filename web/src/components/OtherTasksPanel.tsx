@@ -148,6 +148,7 @@ interface OtherTasksPanelProps {
   currentUser: ActorIdentity;
   showCover: boolean;
   showBody: boolean;
+  showCreatedAt: boolean;
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   restoringTaskId: string | null;
   deletingTaskId: string | null;
@@ -184,6 +185,7 @@ export function OtherTasksPanel({
   currentUser,
   showCover,
   showBody,
+  showCreatedAt,
   onCreateLabel,
   restoringTaskId,
   deletingTaskId,
@@ -350,6 +352,7 @@ export function OtherTasksPanel({
               currentUser={currentUser}
               showCover={showCover}
               showBody={showBody}
+              showCreatedAt={showCreatedAt}
               onCreateLabel={(label) => onCreateLabel(label, task.projectId)}
               onEdit={onEdit}
               onUpdate={onUpdate}
