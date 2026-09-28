@@ -71,12 +71,13 @@ test("comment metadata separators never become avatar content", () => {
 });
 
 test("Codex host identity is forwarded to user-authored taskboard mutations", () => {
-  assert.match(injectSource, /function readCodexUser\(\)/);
+  assert.match(injectSource, /async function readCodexUser\(userId\)/);
   assert.match(
     injectSource,
-    /button\[aria-haspopup="menu"\][\s\S]*?profileButton\.querySelector\("img"\)[\s\S]*?avatar\?\.currentSrc \|\| avatar\?\.src \|\| null/,
+    /function readCodexProfileIdentity\(profileButton\)[\s\S]*?profileButton\.querySelector\("img"\)[\s\S]*?avatar\?\.currentSrc \|\| avatar\?\.src \|\| null/,
   );
-  assert.match(injectSource, /user: readCodexUser\(\)/);
+  assert.match(injectSource, /const user = await readCodexUser\(/);
+  assert.match(injectSource, /currentCodexUser = context\.user/);
   assert.match(typesSource, /user\?: ActorIdentity/);
   assert.match(apiSource, /export function setCurrentUserActor/);
   assert.match(apiSource, /X-Taskboard-User-Id/);
