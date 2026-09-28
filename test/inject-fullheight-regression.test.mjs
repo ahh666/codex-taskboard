@@ -81,6 +81,7 @@ function fixtureHtml(origin) {
       <button data-sidebar-destination="builtin:home" aria-current="page" data-selected><svg viewBox="0 0 20 20"><path d="M2 2h16v16H2Z"/></svg><span class="sr-only">首页</span></button>
       <button data-sidebar-destination="sites"><span class="sr-only">站点</span></button>
       <button aria-haspopup="menu"><svg></svg><span class="sr-only">探索</span></button>
+      <button id="profile-trigger" aria-haspopup="menu" aria-label="Open profile menu" aria-expanded="false" aria-controls="profile-menu"></button>
     </nav>
       <div class="sidebar-navigation">
       <nav role="navigation">
@@ -110,6 +111,22 @@ function fixtureHtml(origin) {
     </div>
     <output id="result"></output>
     <script>
+      const profileTrigger = document.getElementById("profile-trigger");
+      profileTrigger.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowDown") return;
+        const menu = document.createElement("div");
+        menu.id = "profile-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-labelledby", profileTrigger.id);
+        menu.innerHTML = '<div role="menuitem"><div data-menu-row-content><span class="flex-1 min-w-0">Fixture User</span></div></div>';
+        menu.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") return;
+          menu.remove();
+          profileTrigger.setAttribute("aria-expanded", "false");
+        });
+        document.body.appendChild(menu);
+        profileTrigger.setAttribute("aria-expanded", "true");
+      });
       window.__CODEX_TASKBOARD_URL__ = ${JSON.stringify(`${origin}/taskboard?host=codex`)};
       window.__CODEX_TASKBOARD_INSTANCE_TOKEN__ = ${JSON.stringify(instanceToken)};
       window.__CODEX_TASKBOARD_INSTANCE_SECRET__ = ${JSON.stringify(instanceSecret)};

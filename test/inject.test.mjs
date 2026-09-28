@@ -171,7 +171,7 @@ test("the injected iframe can be cache-busted without reloading the Codex shell"
   assert.match(source, /reloadFrame,/);
 });
 
-test("reopening reuses a ready cache-busted iframe without showing the startup placeholder", () => {
+test("reopening captures the current identity before showing a reused cache-busted iframe", () => {
   assert.match(source, /function frameMatchesTaskboardUrl\(taskboardUrl\)/);
   assert.match(source, /loadedUrl\.searchParams\.delete\(FRAME_REFRESH_PARAM\)/);
   assert.match(source, /expectedUrl\.searchParams\.delete\(FRAME_REFRESH_PARAM\)/);
@@ -179,13 +179,12 @@ test("reopening reuses a ready cache-busted iframe without showing the startup p
     source.indexOf("async function prepareTaskboard"),
     source.indexOf("function restoreNativeContent"),
   );
-  assert.match(prepareSource, /const canReuseFrame = Boolean\([\s\S]*frameMatchesTaskboardUrl\(taskboardUrl\)/);
-  assert.match(prepareSource, /if \(canReuseFrame\) showFrame\(\);\s*else showLoading\(\);/);
+  assert.match(prepareSource, /showLoading\(\);[\s\S]*captureHostContext\(\),/);
+  assert.match(prepareSource, /currentCodexUser = context\.user;[\s\S]*showFrame\(\);/);
   assert.match(
     prepareSource,
     /if \(!frameReady \|\| result\.restarted \|\| !frameMatchesTaskboardUrl\(taskboardUrl\)\) \{\s*showLoading\(\);/,
   );
-  assert.doesNotMatch(prepareSource, /async function prepareTaskboard\(generation\) \{\s*showLoading\(\);/);
 });
 
 test("opaque iframe messages require the current document capability", () => {

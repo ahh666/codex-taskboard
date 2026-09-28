@@ -96,7 +96,7 @@
   let pendingThreadCreation = null;
   let lastNativeThreadId = "";
   let lastNativeProjectId = "";
-  let currentCodexUserId = null;
+  let currentCodexUser = null;
   let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
@@ -616,14 +616,13 @@
   }
 
   async function captureHostContext() {
-    currentCodexUserId = null;
     const todoProgress = nativeTodoProgress();
     const [selectedProjectId, projectMetadata, currentUser] = await Promise.all([
       selectedNativeProjectId(),
       readCodexProjectMetadata(),
       requestHost("read-current-user"),
     ]);
-    currentCodexUserId = typeof currentUser.userId === "string" ? currentUser.userId : "";
+    const user = await readCodexUser(typeof currentUser.userId === "string" ? currentUser.userId : "");
     codexProjectMetadata = projectMetadata;
     if (selectedProjectId) lastNativeProjectId = selectedProjectId;
     let projects = readCodexProjects(projectMetadata);
@@ -647,7 +646,7 @@
         projects = readCodexProjects(projectMetadata);
       } while ((projects.length === 0 || !activeThreadRow()) && Date.now() < deadline);
     }
-    const context = readHostContext(projects, lastNativeProjectId);
+    const context = { ...readHostContext(projects, lastNativeProjectId), user };
     if (context.threadRunning && todoProgress) context.threadTodoProgress = todoProgress;
     expandedSections.forEach((candidate) => {
       if (candidate.isConnected && candidate.getAttribute("data-app-action-sidebar-section-collapsed") === "false") {
@@ -775,20 +774,93 @@
     return `codex-user-${(hash >>> 0).toString(36)}`;
   }
 
-  function readCodexUser() {
+  function codexProfileMenu(profileButton) {
+    const menuId = profileButton.getAttribute("aria-controls");
+    const menu = menuId ? document.getElementById(menuId) : null;
+    return menu?.getAttribute("role") === "menu"
+      && menu.getAttribute("aria-labelledby") === profileButton.id
+      ? menu
+      : null;
+  }
+
+  function readCodexProfileIdentity(profileButton) {
+    const menu = codexProfileMenu(profileButton);
+    for (const row of menu?.querySelectorAll('[role="menuitem"], [role="separator"]') ?? []) {
+      if (row.getAttribute("role") === "separator") break;
+      if (row.hasAttribute("aria-label")) continue;
+      const content = row.querySelector("[data-menu-row-content]");
+      const name = content?.querySelector(
+        ":scope > div.flex.min-w-0.flex-1.flex-col > span.min-w-0.truncate:first-child,"
+        + ":scope > span.flex-1.min-w-0",
+      )?.textContent?.replace(/\s+/g, " ").trim();
+      if (!name) continue;
+      const avatar = content.querySelector(":scope > span img") || profileButton.querySelector("img");
+      return { name, avatarUrl: avatar?.currentSrc || avatar?.src || null };
+    }
+    return null;
+  }
+
+  async function normalizeCodexAvatar(avatarUrl) {
+    if (!avatarUrl?.startsWith("data:")) return avatarUrl;
+    const image = new Image();
+    image.src = avatarUrl;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+    for (const size of [48, 32, 16]) {
+      canvas.width = canvas.height = size;
+      canvas.getContext("2d").drawImage(
+        image,
+        (image.naturalWidth - sourceSize) / 2, (image.naturalHeight - sourceSize) / 2,
+        sourceSize, sourceSize, 0, 0, size, size,
+      );
+      const result = canvas.toDataURL("image/webp", 0.8);
+      if (result.startsWith("data:image/webp;base64,") && result.length <= 2048) return result;
+    }
+    throw hostError("无法将 Codex 头像缩小至身份请求头限制", "Could not fit the Codex avatar into the identity header");
+  }
+
+  async function readCodexUser(userId) {
     const profileButton = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => (
       normalizedLabel(button.getAttribute("aria-label")).includes("profile")
       || normalizedLabel(button.getAttribute("aria-label")).includes("个人资料")
     ));
-    const name = profileButton?.textContent?.replace(/\s+/g, " ").trim();
-    if (currentCodexUserId === null || !name) return null;
-    const avatar = profileButton.querySelector("img");
-    const avatarUrl = avatar?.currentSrc || avatar?.src || null;
+    if (!profileButton) throw hostError("未找到 Codex 个人资料菜单", "Could not find the Codex profile menu");
+    const openedMenu = profileButton.getAttribute("aria-expanded") !== "true";
+    let identity;
+    try {
+      if (openedMenu) {
+        profileButton.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true,
+        }));
+      }
+      const deadline = Date.now() + 1_200;
+      do {
+        identity = readCodexProfileIdentity(profileButton);
+        if (identity) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+      } while (Date.now() < deadline);
+      if (!identity) throw hostError("无法读取 Codex 公开显示名称", "Could not read the Codex public display name");
+    } finally {
+      const menu = openedMenu ? codexProfileMenu(profileButton) : null;
+      if (menu) {
+        menu.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Escape", code: "Escape", bubbles: true, cancelable: true,
+        }));
+        const deadline = Date.now() + 1_200;
+        while (profileButton.getAttribute("aria-expanded") === "true" && Date.now() < deadline) {
+          await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
+        if (profileButton.getAttribute("aria-expanded") === "true") {
+          throw hostError("无法关闭 Codex 个人资料菜单", "Could not close the Codex profile menu");
+        }
+      }
+    }
     return {
       type: "user",
-      id: currentCodexUserId || userIdFromName(name),
-      name,
-      avatarUrl,
+      id: userId || userIdFromName(identity.name),
+      name: identity.name,
+      avatarUrl: await normalizeCodexAvatar(identity.avatarUrl),
     };
   }
 
@@ -821,7 +893,7 @@
       language: hostLanguage(),
       theme: currentTheme(),
       projects,
-      user: readCodexUser() ?? undefined,
+      user: currentCodexUser ?? undefined,
       titlebarLeftInset: titlebarLeftInset(),
       sidebarCollapsed: nativeSidebarCollapsed(),
     };
@@ -1748,13 +1820,7 @@
 
   async function prepareTaskboard(generation) {
     const taskboardUrl = resolveTaskboardUrl();
-    const canReuseFrame = Boolean(
-      frameReady
-      && frame?.isConnected
-      && frameMatchesTaskboardUrl(taskboardUrl),
-    );
-    if (canReuseFrame) showFrame();
-    else showLoading();
+    showLoading();
 
     try {
       const [result, context] = await Promise.all([
@@ -1762,6 +1828,7 @@
         captureHostContext(),
       ]);
       if (!active || generation !== openGeneration) return;
+      currentCodexUser = context.user;
       hostContextSnapshot = {
         ...hostContextSnapshot,
         ...context,
