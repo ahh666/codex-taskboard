@@ -1,3 +1,4 @@
+import { Toasts, showToast, dismissUndoToast } from "./components/Toasts";
 import { agentPlatformLabel, sessionResumeCommand } from "./agentSessions";
 import {
   Fragment,
@@ -219,13 +220,9 @@ interface UndoOperation {
   undo: () => Promise<void>;
 }
 
-interface UndoNotice {
-  id: number;
-  message: string;
-}
-
 type ProjectAutomationStatus = "ACTIVE" | "PAUSED";
 type AutomationQuotaState = "available" | "blocked" | "unknown" | "unavailable";
+type AutomationIdleReason = "checking-todos" | "waiting-todos";
 type AutomationIntervalMinutes = 5 | 10 | 15 | 30 | 60;
 
 interface AutomationQuotaStatus {
@@ -245,6 +242,7 @@ interface ProjectAutomationRecord {
   enabledByUser: boolean;
   quotaAware: boolean;
   quota?: AutomationQuotaStatus;
+  idleReason?: AutomationIdleReason;
   intervalMinutes: AutomationIntervalMinutes;
   model: string;
   reasoningEffort: string;
@@ -289,6 +287,7 @@ interface AutomationHostResponse {
   item?: AutomationHostItem;
   items?: AutomationHostItem[];
   quota?: AutomationQuotaStatus;
+  idleReason?: AutomationIdleReason;
   policy?: {
     automationId?: string;
     codexProjectId: string;
@@ -473,6 +472,8 @@ function readProjectAutomations(): ProjectAutomations {
         enabledByUser,
         quotaAware,
         ...(quota ? { quota } : {}),
+        ...(candidate.idleReason === "checking-todos" || candidate.idleReason === "waiting-todos"
+          ? { idleReason: candidate.idleReason } : {}),
         intervalMinutes: candidate.intervalMinutes ?? 5,
         model,
         reasoningEffort,
@@ -897,8 +898,6 @@ export function App() {
   } | null>(null);
   const [automationCatalogLoading, setAutomationCatalogLoading] = useState(false);
   const [automationCatalogError, setAutomationCatalogError] = useState<string | null>(null);
-  const [announcement, setAnnouncementValue] = useState("");
-  const [undoNotice, setUndoNotice] = useState<UndoNotice | null>(null);
   const projectsRequestRef = useRef(0);
   const tasksRequestRef = useRef(0);
   const tasksRef = useRef<Task[]>([]);
@@ -940,8 +939,8 @@ export function App() {
   }, [locale]);
 
   const setAnnouncement = useCallback((message: string) => {
-    setUndoNotice(null);
-    setAnnouncementValue(message);
+    dismissUndoToast();
+    showToast(message);
   }, []);
 
   useEffect(() => {
@@ -1434,6 +1433,7 @@ export function App() {
         && current[projectId]?.enabledByUser === record.enabledByUser
         && current[projectId]?.quotaAware === record.quotaAware
         && JSON.stringify(current[projectId]?.quota) === JSON.stringify(record.quota)
+        && current[projectId]?.idleReason === record.idleReason
         && current[projectId]?.intervalMinutes === record.intervalMinutes
         && current[projectId]?.model === record.model
         && current[projectId]?.reasoningEffort === record.reasoningEffort
@@ -1530,6 +1530,7 @@ export function App() {
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
           ...(response.quota ? { quota: response.quota } : {}),
+          idleReason: response.idleReason,
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -1601,6 +1602,7 @@ export function App() {
           enabledByUser: policy.enabledByUser,
           quotaAware: policy.quotaAware,
           ...(response.quota ? { quota: response.quota } : {}),
+          idleReason: response.idleReason,
           intervalMinutes: policy.intervalMinutes,
           model: policy.model,
           reasoningEffort: policy.reasoningEffort,
@@ -1623,6 +1625,7 @@ export function App() {
             enabledByUser: policy?.enabledByUser ?? stored.enabledByUser,
             quotaAware: policy?.quotaAware ?? stored.quotaAware,
             ...(response.quota ? { quota: response.quota } : {}),
+            idleReason: response.idleReason,
             intervalMinutes: policy?.intervalMinutes ?? stored.intervalMinutes,
             model: policy?.model ?? stored.model,
             reasoningEffort: policy?.reasoningEffort ?? stored.reasoningEffort,
@@ -1648,6 +1651,7 @@ export function App() {
               ? { quota: stored.quota }
               : {}
         ),
+        idleReason: response.idleReason,
         intervalMinutes,
         model: policy?.model ?? item.model,
         reasoningEffort: policy?.reasoningEffort ?? item.reasoningEffort,
@@ -1911,6 +1915,19 @@ export function App() {
     setAutomationError(null);
     void reconcileProjectAutomation();
   }, [selectedProjectId, reconcileProjectAutomation]);
+
+  useEffect(() => {
+    if (!selectedProjectAutomation?.enabledByUser || !selectedProjectAutomation.idleReason) return;
+    // Refresh the asynchronous semantic check through the existing status path.
+    const timer = window.setInterval(() => {
+      void reconcileProjectAutomation();
+    }, selectedProjectAutomation.idleReason === "checking-todos" ? 5_000 : 60_000);
+    return () => window.clearInterval(timer);
+  }, [
+    selectedProjectAutomation?.enabledByUser,
+    selectedProjectAutomation?.idleReason,
+    reconcileProjectAutomation,
+  ]);
 
   useEffect(() => {
     if (!embedded || window.parent === window) return;
@@ -2346,8 +2363,7 @@ export function App() {
     const operation = { id: ++undoSequenceRef.current, undo };
     undoStackRef.current = [...undoStackRef.current.slice(-19), operation];
     if (!message) return;
-    setAnnouncementValue("");
-    setUndoNotice({ id: operation.id, message });
+    showToast(message, { label: `${text("撤回", "Undo")} ${undoShortcut}`, run: () => void performUndo() });
   }
 
   async function performUndo() {
@@ -2356,7 +2372,7 @@ export function App() {
     if (!operation) return;
     undoStackRef.current = undoStackRef.current.slice(0, -1);
     undoInFlightRef.current = true;
-    setUndoNotice(null);
+    dismissUndoToast();
     setProjectMenuOpen(false);
     closeContextMenu();
     setActionError(null);
@@ -3344,7 +3360,7 @@ export function App() {
     setFilters(EMPTY_TASK_FILTERS);
     setActionError(null);
     undoStackRef.current = [];
-    setUndoNotice(null);
+    dismissUndoToast();
     const url = buildIssueUrl(window.location.href, projectId, null);
     window.history.replaceState(null, "", url);
   }
@@ -4599,25 +4615,7 @@ export function App() {
         </Suspense>
       )}
 
-      <div className="sr-only" role="status" aria-live="polite">{announcement}</div>
-      {undoNotice && (
-        <div
-          className="toast undo-toast"
-          role="status"
-          onAnimationEnd={() => setUndoNotice((current) => current?.id === undoNotice.id ? null : current)}
-        >
-          <span aria-hidden="true"><LinearIcon name="check" /></span>
-          <span className="undo-toast-message">{undoNotice.message}</span>
-          <button type="button" onClick={() => void performUndo()}>
-            {text("撤回", "Undo")} <kbd>{undoShortcut}</kbd>
-          </button>
-        </div>
-      )}
-      {announcement && (
-        <div className="toast" role="status" onAnimationEnd={() => setAnnouncementValue("")}>
-          <span aria-hidden="true"><LinearIcon name="check" /></span>{announcement}
-        </div>
-      )}
+      <Toasts />
       </div>
     </TaskboardLanguageProvider>
   );
