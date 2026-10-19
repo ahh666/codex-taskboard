@@ -89,6 +89,16 @@ test("entry recognizes the Explore rail labels", () => {
 
 });
 
+test("entry and panel mounting support the classic expanded sidebar", () => {
+  assert.match(source, /function railReferenceButton\(\)/);
+  assert.match(source, /function sidebarReferenceButton\(\)/);
+  assert.match(source, /return railReferenceButton\(\) \|\| sidebarReferenceButton\(\)/);
+  assert.match(source, /button\.querySelector\("\.text-fade-truncate"\)/);
+  assert.match(source, /const classicSurface = viewport\?\.parentElement/);
+  assert.match(source, /return \{ frameHost, surface: classicSurface, rail: null \}/);
+  assert.match(source, /page\.style\.left = rail[\s\S]*?\?[^:]+:[\s\S]*?"0"/);
+});
+
 test("opening Taskboard preserves native selection and the titlebar", () => {
   assert.doesNotMatch(source, /mutedNativeSelections|hideNativeHeader/);
   assert.doesNotMatch(source, /node\.removeAttribute\("aria-current"\)/);
@@ -96,6 +106,8 @@ test("opening Taskboard preserves native selection and the titlebar", () => {
   assert.match(source, /restoreNativeRailIcons\(\)/);
   assert.match(source, /destination\?\.getAttribute\("aria-current"\) === "page"/);
   assert.match(source, /function onDocumentClick[\s\S]*event\.stopPropagation\(\)[\s\S]*closeTaskboard\(false\);/);
+  assert.match(source, /\[\$\{HOST_ATTRIBUTE\}="true"\] \[data-app-shell-titlebar="true"\]/);
+  assert.match(source, /\[\$\{HOST_ATTRIBUTE\}="true"\] \[data-app-shell-main-titlebar="true"\]/);
 });
 
 test("the embedded page sits below the native titlebar without a full-page no-drag region", () => {

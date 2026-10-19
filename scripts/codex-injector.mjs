@@ -34,6 +34,7 @@ import {
 } from "./codex-cdp-pipe.mjs";
 import {
   activateWindowsCodex,
+  activateWindowsCodexWindow,
   stopWindowsCodex,
   windowsCodexProcesses,
   windowsCodexProfileArgument,
@@ -566,7 +567,18 @@ async function stopManagedCodex(record) {
   }
 }
 
-function activateCodexApp(pid) {
+function activateCodexApp(pid, appPath) {
+  if (process.platform === "win32") {
+    try {
+      activateWindowsCodexWindow(
+        appPath,
+        withoutTaskboardLauncherEnvironment(process.env),
+      );
+    } catch (error) {
+      console.error(`Unable to activate the Codex window: ${error.message}`);
+    }
+    return;
+  }
   if (process.platform !== "darwin") return;
   const activation = spawnSync("/usr/bin/osascript", [
     "-l",
@@ -3129,7 +3141,7 @@ async function main() {
         throw new Error("Taskboard injection is not ready");
       }
       await connection.send("Page.bringToFront");
-      activateCodexApp(codexAppPid);
+      activateCodexApp(codexAppPid, options.appPath);
       openedRequestGeneration = Math.max(openedRequestGeneration, generation);
       return true;
     } catch (error) {
@@ -3527,7 +3539,7 @@ async function main() {
     if (firstResults.length > 0) {
       if (shouldOpenFirstTarget) {
         openedRequestGeneration = Math.max(openedRequestGeneration, firstOpenGeneration);
-        activateCodexApp(codexAppPid);
+        activateCodexApp(codexAppPid, options.appPath);
       }
       console.log(JSON.stringify({ injected: firstResults }, null, 2));
       emitLauncherEvent("injected");
